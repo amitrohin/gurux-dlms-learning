@@ -1,0 +1,10 @@
+connection con;
+con_init(&con, 1);
+cl_init(&con.settings, 1, 1, 1, DLMS_AUTHENTICATION_NONE, NULL, DLMS_INTERFACE_TYPE_WRAPPER);
+con.settings.cipher.security = DLMS_SECURITY_ENCRYPTION;
+bb_clear(&con.settings.cipher.systemTitle);
+bb_clear(&con.settings.cipher.blockCipherKey);
+bb_clear(&con.settings.cipher.authenticationKey);
+bb_addHexString(&con.settings.cipher.systemTitle, "4D4D4D0000BC614E");
+bb_addHexString(&con.settings.cipher.blockCipherKey, "000102030405060708090A0B0C0D0E0F");
+bb_addHexString(&con.settings.cipher.authenticationKey, "D0D1D2D3D4D5D6D7D8D9DADBDCDDDEDF");
