@@ -5,7 +5,7 @@ TARGET   = libgurux_dlms_c.a
 CC       = gcc 
 # compiling flags here
 #CFLAGS   = -g -std=c99 -Wall -fPIC
-CFLAGS   = -g -O2 -std=c99 -Wall
+CFLAGS   = -g -O2 -std=c99 -Wall -D__linux__
 #Add this if used on microcontroller. -DGX_DLMS_MICROCONTROLLER
 #Add this if you don't want to use malloc. -DDLMS_IGNORE_MALLOC
 #Add this if you don't want to use object pointers. -DDLMS_IGNORE_OBJECT_POINTERS

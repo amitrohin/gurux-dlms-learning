@@ -1,73 +1,48 @@
-//
-// --------------------------------------------------------------------------
-//  Gurux Ltd
-//
-//
-//
-// Filename:        $HeadURL:  $
-//
-// Version:         $Revision:  $,
-//                  $Date:  $
-//                  $Author: $
-//
 // Copyright (c) Gurux Ltd
-//
-//---------------------------------------------------------------------------
-#if defined(_WIN32) || defined(_WIN64)//Windows includes
-#include <ws2tcpip.h>
-#include <Windows.h> //Add support for serial port functions.
-#else
+
 #define INVALID_HANDLE_VALUE -1
 #include <unistd.h>
 #include <stdlib.h>
-#include <errno.h> //Add support for sockets
-#include <netdb.h> //Add support for sockets
-#include <sys/types.h> //Add support for sockets
-#include <sys/socket.h> //Add support for sockets
-#include <netinet/in.h> //Add support for sockets
-#include <arpa/inet.h> //Add support for sockets
+#include <errno.h>
+#include <netdb.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <termios.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#endif
 
-#include "../include/communication.h"
-#include "../../development/include/gxkey.h"
-#include "../../development/include/converters.h"
-#include "../../development/include/cosem.h"
-#include "../../development/include/gxserializer.h"
+#include "communication.h"
+#include "gxkey.h"
+#include "converters.h"
+#include "cosem.h"
+#include "gxserializer.h"
 
-//Returns current time.
-//If you are not using operating system you have to implement this by yourself.
-//Reason for this is that all compilers's or HWs don't support time at all.
-void time_now(gxtime* value)
-{
+/* Returns current time.
+ * If you are not using operating system you have to implement this by yourself.
+ * Reason for this is that all compilers's or HWs don't support time at all.
+ */
+void time_now(gxtime* value) {
     time_initUnix(value, (unsigned long)time(NULL));
 }
 
-//Check is IP address IPv6 or IPv4 address.
-unsigned char com_isIPv6Address(const char* pAddress)
-{
+/* Check is IP address IPv6 or IPv4 address.
+ */
+int com_isIPv6Address(const char* pAddress) {
     return strstr(pAddress, ":") != NULL;
 }
 
-//Make connection using TCP/IP connection.
-int com_makeConnect(connection* connection, const char* address, int port, int waitTime)
-{
+/* Make connection using TCP/IP connection.
+ */
+int com_makeConnect(connection* connection, const char* address, int port, int waitTime) {
     int ret;
-    //create socket.
     int family = com_isIPv6Address(address) ? AF_INET6 : AF_INET;
     connection->socket = socket(family, SOCK_STREAM, IPPROTO_IP);
-    if (connection->socket == -1)
-    {
-#if defined(_WIN32) || defined(_WIN64)//Windows includes
-        int err = WSAGetLastError();
-        printf("Socket creation failed: %d\r\n", err);
-#else
+    if (connection->socket == -1) {
         int err = errno;
         printf("Socket creation failed: %d, %s\r\n", err, strerror(err));
-#endif
         return DLMS_ERROR_CODE_INVALID_PARAMETER;
     }
 
@@ -88,13 +63,8 @@ int com_makeConnect(connection* connection, const char* address, int port, int w
             struct hostent* Hostent = gethostbyname(address);
             if (Hostent == NULL)
             {
-#if defined(_WIN32) || defined(_WIN64)//Windows includes
-                ret = WSAGetLastError();
-                closesocket(connection->socket);
-#else
                 ret = errno;
                 close(connection->socket);
-#endif
                 connection->socket = -1;
                 return DLMS_ERROR_TYPE_COMMUNICATION_ERROR | ret;
             };
@@ -109,13 +79,8 @@ int com_makeConnect(connection* connection, const char* address, int port, int w
         ret = inet_pton(family, address, &(addrIP6.sin6_addr));
         if (ret == -1)
         {
-#if defined(_WIN32) || defined(_WIN64)//Windows includes
-            ret = WSAGetLastError();
-            closesocket(connection->socket);
-#else
             ret = errno;
             close(connection->socket);
-#endif
             connection->socket = -1;
             return DLMS_ERROR_TYPE_COMMUNICATION_ERROR | ret;
         };
@@ -124,64 +89,22 @@ int com_makeConnect(connection* connection, const char* address, int port, int w
     }
 
     //Set timeout.
-#if defined(_WIN32) || defined(_WIN64)//If Windows
-    setsockopt(connection->socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&waitTime, sizeof(waitTime));
-#else
     struct timeval tv;
     tv.tv_sec = waitTime / 1000;
     tv.tv_usec = 0;
     setsockopt(connection->socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
-#endif //
     //Connect to the meter.
     ret = connect(connection->socket, add, addSize);
     if (ret == -1)
     {
-#if defined(_WIN32) || defined(_WIN64)//Windows includes
-        ret = WSAGetLastError();
-        closesocket(connection->socket);
-        printf("Connection failed: %d\n", ret);
-#else
         ret = errno;
         close(connection->socket);
         printf("Connection failed: %d, %s\n", ret, strerror(ret));
-#endif
         connection->socket = -1;
         return DLMS_ERROR_TYPE_COMMUNICATION_ERROR | ret;
     };
     return DLMS_ERROR_CODE_OK;
 }
-
-#if defined(_WIN32) || defined(_WIN64)//If Windows
-int com_setCommState(HANDLE hWnd, LPDCB DCB)
-{
-    if (!SetCommState(hWnd, DCB))
-    {
-        DWORD err = GetLastError(); //Save occured error.
-        if (err == 995)
-        {
-            COMSTAT comstat;
-            unsigned long RecieveErrors;
-            if (!ClearCommError(hWnd, &RecieveErrors, &comstat))
-            {
-                return DLMS_ERROR_TYPE_COMMUNICATION_ERROR | GetLastError();
-            }
-            if (!SetCommState(hWnd, DCB))
-            {
-                return DLMS_ERROR_TYPE_COMMUNICATION_ERROR | GetLastError();
-            }
-        }
-        else
-        {
-            //If USB to serial port converters do not implement this.
-            if (err != ERROR_INVALID_FUNCTION)
-            {
-                return DLMS_ERROR_TYPE_COMMUNICATION_ERROR | err;
-            }
-        }
-    }
-    return DLMS_ERROR_CODE_OK;
-}
-#endif
 
 int com_readSerialPort(
     connection* connection,

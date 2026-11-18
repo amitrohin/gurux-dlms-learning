@@ -1,38 +1,15 @@
-//
-// --------------------------------------------------------------------------
-//  Gurux Ltd
-//
-//
-//
-// Filename:        $HeadURL:  $
-//
-// Version:         $Revision:  $,
-//                  $Date:  $
-//                  $Author: $
-//
 // Copyright (c) Gurux Ltd
-//
-//---------------------------------------------------------------------------
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
-#if defined(_WIN32) || defined(_WIN64)//Windows includes
-#include <conio.h>
-#include "../include/getopt.h"
-#include <process.h>//Add support for threads
-#if _MSC_VER > 1000
-#include <crtdbg.h>
-#endif
-//Windows doesn't implement strcasecmp. It uses strcmpi.
-#define strcasecmp _strcmpi
-#else
-#include <string.h> /* memset */
+#include <string.h>
 #include <unistd.h>
 #include <strings.h>
-#endif
 
-#include "../include/communication.h"
-#include "../../development/include/gxserializer.h"
+#include "gxserializer.h"
+
+#include "communication.h"
 
 //Client don't need this.
 void svr_preGet(
