@@ -63,59 +63,61 @@ would be addressed to them.
 HDLC frame format type 3
 ========================
 
-| Flag   | Frame Format & Length | Destination Address | Source Address | Control | HCS     | [LLC + Data] | FCS     | Flag |
+| Flag  | Format | DA | SA | Control | HCS    | LLC + Data | FCS    | Flag  |
++-------+--------+----+----+---------+--------+------------+--------+-------+
+| 8bits | 16bits |    |    | 8bits   | 16bits |            | 16bits | 8bits |
++-------+--------+----+----+---------+--------+------------+--------+-------+
+| 0x7e  |                                                           | 0x7e  |
 
-| Flag   | Frame format & length | Dest. address       | Src. address   | Control | HCS     | Information  | FCS     | Flag |
-+--------+-----------------------+---------------------+----------------+---------+---------+--------------+---------+------+
-| 8 bits | 16 bits               | ...                 |                | 8 bits  | 16 bits |              | 16 bits |
-|  0x7e  |
+Flag
+    0x7e
 
-Flag            - 0x7e
+Frame format
+    0b1010 S LLLLLLLLLLL
+      ^    ^      ^
+      |    |      +-- (11 bits) Frame length sub-field
+      |    +-- (1 bits) segmentation-bit
+      +-- (4 bits) format-type (identifies a frame format type 3)
 
-Frame format    - 0b1010 S LLLLLLLLLLL
-                    ^    ^      ^
-                    |    |      +-- (11 bits) Frame length sub-field
-                    |    +-- (1 bits) segmentation-bit
-                    +-- (4 bits) format-type (identifies a frame format type 3)
+DA & SA
+    Upper HDLC address - logical device
+    Lower HDLC address - physical device
+                |   8 bits    |   8 bits    |   8 bits    |   8 bits   |
+                |      7    |1|      7    |1|      7    |1|      7   |1|
+                +-------------+-------------+-------------+------------+
+    - 1 байт    |Upper      |1|
+                +-------------+-------------+
+    - 2 байта   |Upper      |0|Lower      |1|
+                +-------------+-------------+-------------+------------+
+    - 4 байта   |Upper, high|0|Uppper, low|0|Lower, high|0|Lower, low|1|
+                +-------------+-------------+-------------+------------+
 
-DA & SA         - могут быть 3-х видов
-                    Upper HDLC address - logical device
-                    Lower HDLC address - physical device
-                                    |         8 bits        |         8 bits       |         8 bits        |        8 bits        |
-                                    |            7        |1|            7       |1|            7        |1|           7        |1|
-                                    +-----------------------+----------------------+-----------------------+----------------------+
-                        - 1 байт    |Upper HDLC address   |1|
-                                    +-----------------------+----------------------+
-                        - 2 байта   |Upper HDLC address   |0|Lower HDLC address  |1|
-                                    +-----------------------+----------------------+-----------------------+----------------------+
-                        - 4 байта   |Upper HDLC addr, high|0|Upper HDLC addr, low|0|Lower HDLC addr, high|0|Lower HDLC addr, low|1|
-                                    +-----------------------+----------------------+-----------------------+----------------------+
+    [Reserved HDLC client addresses]
+    No-station                      0x00
+    Client Management Process       0x01
+    Public Client                   0x10
+    Open for client SAP assignment  0x02..0x0F, 0x11..0xFF
 
-                    [Reserved HDLC client addresses]
-                    No-station                      0x00
-                    Client Management Process       0x01
-                    Public Client                   0x10
-                    Open for client SAP assignment  0x02..0x0F, 0x11..0xFF
+    [Reserved upper HDLC server addresses]
+                                    One byte address    Two byte address
+    -------------------------------+-------------------+----------------
+    No-station                      0x00                0x0000
+    Management Logical Device       0x01                0x0001
+    Reserved for future use         0x02..0x0F          0x0002..0x000F
+    Open for server SAP assignment  0x10..0x7E          0x0010..0x3FFE
+    All-station (Broadcast)         0x7F                0x3FFF
 
-                    [Reserved upper HDLC server addresses]
-                                                    One byte address    Two byte address
-                    -------------------------------+-------------------+----------------
-                    No-station                      0x00                0x0000
-                    Management Logical Device       0x01                0x0001
-                    Reserved for future use         0x02..0x0F          0x0002..0x000F
-                    Open for server SAP assignment  0x10..0x7E          0x0010..0x3FFE
-                    All-station (Broadcast)         0x7F                0x3FFF
+    [Reserved lower HDLC server addresses]
+                                    One byte address    Two byte address
+    -------------------------------+-------------------+----------------
+    No-station                      0x00                0x0000
+    Reserved for future use         0x01..0x0F          0x0001..0x000F
+    Open for server SAP assignment  0x10..0x7D          0x0010..0x3FFD
+    CALLING Physical Device         0x7E                0x3FFE
+    All-station (Broadcast)         0x7F                0x3FFF
 
-                    [Reserved lower HDLC server addresses]
-                                                    One byte address    Two byte address
-                    -------------------------------+-------------------+----------------
-                    No-station                      0x00                0x0000
-                    Reserved for future use         0x01..0x0F          0x0001..0x000F
-                    Open for server SAP assignment  0x10..0x7D          0x0010..0x3FFD
-                    CALLING Physical Device         0x7E                0x3FFE
-                    All-station (Broadcast)         0x7F                0x3FFF
-
-    [!] Клиентский адрес всегда 1 байт. Серверный адрес (счетчик) может быть 1, 2 или 4 байта.
+    [!] Клиентский адрес всегда 1 байт. Серверный адрес (счетчик) может быть
+        1, 2 или 4 байта.
 
 Control         - ??? 8.4.3
 
