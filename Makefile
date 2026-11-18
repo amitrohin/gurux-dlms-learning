@@ -1,7 +1,10 @@
 .SUFFIXES:
 
 PROGS := spodes
-SRCS.spodes += main.c foo.c
+SRCS.spodes += main.c
+SRCS.spodes += foo.c
+SRCS.spodes += mbuf.c
+SRCS.spodes += hdlc.c
 
 CFLAGS ?= -g -O0 -pipe
 CXXFLAGS ?= $(CFLAGS)

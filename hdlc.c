@@ -1,13 +1,20 @@
 // vi: ts=4:sts=4:sw=4:et:nu:syn=off:noai:nosi
 
+#include "foo.h"
+#include "mbuf.h"
+
 typedef struct hdlc {
     int fragment_bit;
     int length;
-    struct hdlc_address dst, src;
-    uint16_t logical_device;
-    uint16_t physical_device;
+    int DA_upper;
+    int DA_lower;
+    int SA_upper;
+    int SA_lower;
 } HDLC;
-int hdlc_init(struct hdlc *);
+void HDLC_init(HDLC *);
+void HDLC_fini(HDLC *);
+HDLC *HDLC_create();
+void HDLC_destroy(HDLC *);
 
 typedef struct hdlc_ctx {
     enum {
@@ -25,14 +32,21 @@ typedef struct hdlc_ctx {
         HDLC_SA,
         HDLC_Complete,          /* пакет полностью прочитан */
     } state;
-    struct mbuf pktbuf;
-    struct hdlc *hdlc;
+    struct mbuf pkt;
+    HDLC hdlc;
 } HDLC_CTX;
 
-void hdlc_ctx_init(struct hdlc_ctx *ctx) {
-    ctx->state = DHLC_Initial;
-    mbuf_init(&ctx->mbuf, 256);
+int hdlc_ctx_init(struct hdlc_ctx *ctx) {
+    ctx->state = HDLC_Initial;
+    mbuf_init(&ctx->pkt);
+    if (mbuf_reserve(&ctx->pkt, 256))
+        eret(-1, "mbuf_reserve()");
     ctx->hdlc = NULL;
+    return 0;
+}
+void hdlc_ctx_fini(struct hdlc_ctx *ctx) {
+    mbuf_fini(&ctx->mbuf);
+    hdlc_destroy(ctx->hdlc);
 }
 
 int HDLC_CTX_Update(struct hdlc_ctx *ctx, FILE *fp) {

@@ -3,6 +3,11 @@
 #include <openssl/err.h>
 #include "foo.h"
 
+extern inline unsigned int ui_nextpow2(unsigned int x);
+extern inline unsigned long ul_nextpow2(unsigned long x);
+extern inline unsigned long long ull_nextpow2(unsigned long long x);
+extern inline size_t zu_nextpow2(size_t x);
+
 static __thread char *pos;
 static __thread size_t cap, len;
 static __thread char buf[0x1000];
@@ -107,3 +112,80 @@ void ossl_elog_ex(
     va_end(ap);
 }
 
+
+static ssize_t fmread(void *cookie, char *buf, size_t size) {
+    struct fmemctl *ctl = cookie;
+    ssize_t n = ctl->len - ctl->pos;
+    if (n > size)
+        n = size;
+    memcpy(buf, ctl->bufp + ctl->pos, n);
+    ctl->pos += n;
+    return n;
+}
+
+static ssize_t fmwrite(void *cookie, char const *buf, size_t size) {
+    struct fmemctl *ctl = cookie;
+    ssize_t n = ctl->cap - ctl->pos - 1;
+    if (!n) {
+        n = -1;
+        errno = ENOSPC;
+    } else {
+        if (n > size)
+            n = size;
+        memcpy(ctl->bufp + ctl->pos, buf, n);
+        ctl->pos += n;
+        if (ctl->len < ctl->pos) {
+            ctl->len = ctl->pos;
+            ctl->bufp[ctl->len] = '\0';
+        }
+    }
+    return n;
+}
+
+static int fmseek(void *cookie, off64_t *offset, int whence) {
+    struct fmemctl *ctl = cookie;
+    off64_t pos;
+    switch (whence) {
+        case SEEK_SET: pos = *offset; break;
+        case SEEK_CUR: pos = ctl->pos + *offset; break;
+        case SEEK_END: pos = ctl->len + *offset; break;
+        default:
+            errno = EINVAL;
+            return -1;
+    }
+    if (pos < 0 || pos >= (off64_t)ctl->cap) {
+        errno = EINVAL;
+        return -1;
+    }
+    ssize_t gap = (ssize_t)pos - (ssize_t)ctl->len;
+    if (gap > 0) {
+        memset(ctl->bufp + ctl->len, 0, gap + 1);
+        ctl->len = pos;
+    }
+    ctl->pos = *offset = pos;
+    return 0;
+}
+
+FILE *fmemopen_ex(
+    char * restrict buf, size_t size, char const * restrict mode,
+    struct fmemctl *ctl)
+{   
+    FILE *fp = NULL;
+
+    if (!buf || !size || !ctl)
+        errno = EINVAL;
+    else {
+        ctl->bufp = buf;
+        ctl->cap = size;
+        ctl->len = ctl->pos = 0;
+        cookie_io_functions_t fmemopen_ex_io_funcs = {
+            .read = fmread, .write = fmwrite, .seek = fmseek, .close = NULL
+        };
+        fp = fopencookie(ctl, mode, fmemopen_ex_io_funcs);
+        if (fp)
+            setbuf(fp, NULL);
+    }
+    return fp;
+}
+
+extern inline void fmemopen_ex_reset(struct fmemctl *);
