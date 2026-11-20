@@ -5,6 +5,19 @@
 
 extern inline void mbuf_init(struct mbuf *mb);
 extern inline void mbuf_fini(struct mbuf *mb);
+extern inline struct mbuf *mbuf_attach(struct mbuf *mb);
+extern inline void mbuf_detach(struct mbuf *mb);
+
+struct mbuf *mbuf_create(size_t size) {
+    struct mbuf *mb;
+
+    mb = malloc(sizeof(struct mbuf));
+    if (mb)
+        mbuf_init(mb);
+    else
+        elog2(errno, "malloc(%zu)", sizeof(struct mbuf));
+    return mb;
+}
 
 int mbuf_resize(struct mbuf *mb, size_t size) {
     if (!size) {

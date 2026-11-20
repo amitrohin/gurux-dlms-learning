@@ -11,6 +11,7 @@
 #include <termios.h>
 
 #include "foo.h"
+#include "hdlc.h"
 
 static void usage(int code, const char *progname) __attribute__((noreturn));
 static int getnum(int *num, const char *s, int base);
@@ -58,6 +59,9 @@ int main(int argc, char *argv[]) {
     argc -= optind;
     argv += optind;
 
+#define XXX 1
+
+#ifndef XXX
     printf("%s, %d\n", line.dev, line.speed);
 
     line.fp = fopen(line.dev, "w+");
@@ -79,18 +83,33 @@ int main(int argc, char *argv[]) {
     fprintf(line.fp, "");
  
 
+    
+
 
     if (tcsetattr(fileno(line.fp), TCSAFLUSH, &line.tios) < 0)
         elog2(errno, "tcsetattr(): %s", line.dev);
     fclose(line.fp);
+#endif
+
+    static HDLC_CTX hdlc_ctx;
+
+    if (HDLC_CTX_init(&hdlc_ctx, NULL, NULL))
+        egoto(E0, "HDLC_CTX_init()");
+    HDLC_CTX_update(&hdlc_ctx, stdin);
+
+    HDLC_CTX_fini(&hdlc_ctx);
     return 0;
 
 E0: 
+#ifndef XXX
     if (line.flags & LINE_TERMIOS_VALID)
         if (tcsetattr(fileno(line.fp), TCSAFLUSH, &line.tios) < 0)
             elog2(errno, "tcsetattr(): %s", line.dev);
     if (line.fp)
         fclose(line.fp);
+#endif
+
+    HDLC_CTX_fini(&hdlc_ctx);
     return -1;
 }
 
