@@ -1,29 +1,103 @@
-// vi: ts=4:sts=4:sw=4:et:nu:syn=off:noai:nosi
+
 #ifndef __SPODES_HDLC_H__
 #define __SPODES_HDLC_H__
+
+#include <stdint.h>
 
 #include "foo.h"
 #include "mbuf.h"
 
+enum hdlc_type { HDLC_I, HDLC_S, HDLC_U };
+
+enum hdlc_s_cmd {
+    HDLC_S_RR   = 0x01, /* Receive Ready (подтверждение кадров до nr - 1) */
+    HDLC_S_RNR  = 0x05, /* Receive Not Ready (буфер занят) */
+
+    /* Ниже команды, которые не используются в СПОДЭС */
+    HDLC_S_REJ  = 0x09, /* Reject, запрос повторной передачи с кадра nr */
+    HDLC_S_SREJ = 0x0d, /* Selective Reject, выборочный повтор кадра nr */
+};
+
+/* [!] Кодируются битами байта Control без учета флага P/F (маска 0xEF) */
+enum hdlc_u_cmd {
+    HDLC_U_UI   = 0x03, /* Unnumbered Information - бессессионный кадр данных */
+    HDLC_U_SNRM = 0x83, /* Set Normal Response Mode - запрос открытия сеанса связи */
+    HDLC_U_DISC = 0x43, /* Disconnect - запрос разрыва сеанса связи */
+    HDLC_U_UA   = 0x63, /* Unnumbered Acknowledgment - подтверждение SNRM или DISC */
+    HDLC_U_FRMR = 0x87, /* Frame Reject - отклонение некорректного кадра (ошибка протокола) */
+    HDLC_U_DM   = 0x0F, /* Disconnected Mode - станция находится в отключенном состоянии */
+
+    /* Команды и ответы стандарта ISO/IEC 13239, не используемые в СПОДЭС */
+    HDLC_U_SIM  = 0x07, /* Set Initialization Mode - команда перевода в режим инициализации */
+    HDLC_U_RIM  = HDLC_U_SIM,
+                        /* Request Initialization Mode - ответ-запрос инициализации */
+    HDLC_U_SARM = HDLC_U_DM,
+                        /* Set Asynchronous Response Mode - асинхронный режим ответа */
+    HDLC_U_UP   = 0x23, /* Unnumbered Poll - команда ненумерованного опроса */
+    HDLC_U_SABM = 0x2F, /* Set Asynchronous Balanced Mode - асинхронный сбалансированный режим */
+    HDLC_U_RD   = HDLC_U_DISC,
+                        /* Request Disconnect - ответ-запрос на отключение */
+    HDLC_U_SARME= 0x4F, /* Set Asynchronous Response Mode Extended — расширенный ARM (7-бит) */
+    HDLC_U_SABME= 0x6F, /* Set Asynchronous Balanced Mode Extended — расширенный ABM (7-бит) */
+    HDLC_U_RSET = 0x8F, /* Reset - команда сброса счетчика принимаемых кадров N(R) */
+    HDLC_U_XID  = 0xAF, /* Exchange Identification - обмен идентификацией и параметрами станции */
+    HDLC_U_SNRME= 0xCF, /* Set Normal Response Mode Extended - расширенный NRM (7-бит счетчики) */
+    HDLC_U_TEST = 0xE3, /* Test - команда/ответ тестирования канала связи (эхо-проверка) */
+    HDLC_U_UIH  = 0xEF, /* UI with Header Check - ненумерованная информация с CRC только заголовка */
+};
+
+/* Поля байта Control для информационного кадра (I-Frame) */
+struct hdlc_control_i {
+    enum hdlc_type type;
+    uint8_t ns;             /* N(S): номер отправляемого кадра (0..7) */
+    uint8_t nr;             /* N(R): номер следующего ожидаемого кадра (0..7) */
+    uint8_t pf;             /* P/F: бит опроса/финала (0 или 1) */
+};
+
+/* Поля байта Control для супервизорного кадра (S-Frame) */
+struct hdlc_control_s {
+    enum hdlc_type type;
+    enum hdlc_s_cmd cmd;    /* Поля байта Control для супервизорного кадра (S-Frame) */
+    uint8_t nr;             /* N(R): номер следующего ожидаемого кадра (0..7) */
+    uint8_t pf;             /* P/F: бит опроса/финала (0 или 1) */
+};
+
+/* Поля байта Control для ненумерованного кадра (U-Frame) */
+struct hdlc_control_u {
+    enum hdlc_type type;
+    enum hdlc_u_cmd cmd;    /* Команда/ответ U-кадра (SNRM, UA, DISC, DM, FRMR, UI и др.) */
+    uint8_t pf;             /* P/F: бит опроса/финала (0 или 1) */
+};
+
+union hdlc_control {
+    enum hdlc_type type;
+    struct hdlc_control_i i;
+    struct hdlc_control_s s;
+    struct hdlc_control_u u;
+};
+
 typedef struct hdlc {
     int nref;
-    int fragment_bit;
-    int length;
-    int DA_upper;
-    int DA_lower;
-    int SA_upper;
-    int SA_lower;
+    int16_t length;         /* 13 бит */
+    int16_t DA_upper;       /* 7 или 14 бит */
+    int16_t DA_lower;       /* 7 или 14 бит */
+    int16_t SA_upper;       /* 7 или 14 бит */
+    int16_t SA_lower;       /* 7 или 14 бит */
+    uint8_t fragment_bit;   /* 1 bit */
+    union hdlc_control control;
 } HDLC;
 
 #define HDLC_INITIALIZER \
     { \
         .nref = 1, \
-        .fragment_but = 0, \
+        .fragment_bit = 0, \
         .length = 0, \
         .DA_upper = -1, \
         .DA_lower = -1, \
         .SA_upper = -1, \
         .SA_lower = -1, \
+        .frame_subtype = -1, \
+        .pf_bit = -1, \
     }
 
 inline
@@ -78,6 +152,7 @@ enum hdlc_ctx_state {
     HDLC_SA_2,
     HDLC_SA_3,
     HDLC_SA,
+    HDLC_Control,
     HDLC_Complete,          /* пакет полностью прочитан */
 };
 char const *hdlc_ctx_strstate(enum hdlc_ctx_state state);

@@ -2,10 +2,63 @@
 
 #include <stdio.h>
 #include <errno.h>
+#include <inttypes.h>
 
 #include "foo.h"
 #include "mbuf.h"
 #include "hdlc.h"
+
+
+#define MAPENTRY(s)     [s] = #s
+#define CASENTRY(s)     case s: return #s;
+
+static char const *hdlc_type_strmap[] = {
+    MAPENTRY(HDLC_I),
+    MAPENTRY(HDLC_S),
+    MAPENTRY(HDLC_U),
+};
+static inline char const *HDLC_strtype(enum hdlc_type type) {
+    assert(type >= 0);
+    assert(type < sizeof hdlc_type_strmap/sizeof hdlc_type_strmap[0]);
+    return hdlc_type_strmap[type];
+}
+
+static char const *HDLC_s_strcmd(enum hdlc_s_cmd cmd) {
+    switch (cmd) {
+        CASENTRY(HDLC_S_RR)
+        CASENTRY(HDLC_S_RNR)
+        CASENTRY(HDLC_S_REJ)
+        CASENTRY(HDLC_S_SREJ)
+    }
+    elog("Unknown HDLC S-frame command: %d", cmd);
+    return NULL;
+}
+static char const *HDLC_u_strcmd(enum hdlc_u_cmd cmd) {
+    switch (cmd) {
+        CASENTRY(HDLC_U_UI)
+        CASENTRY(HDLC_U_SNRM)
+        CASENTRY(HDLC_U_DISC)
+        CASENTRY(HDLC_U_UA)
+        CASENTRY(HDLC_U_FRMR)
+        CASENTRY(HDLC_U_DM)
+        CASENTRY(HDLC_U_SIM)
+        // CASENTRY(HDLC_U_RIM)
+        // CASENTRY(HDLC_U_SARM)
+        CASENTRY(HDLC_U_UP)
+        CASENTRY(HDLC_U_SABM)
+        // CASENTRY(HDLC_U_RD)
+        CASENTRY(HDLC_U_SARME)
+        CASENTRY(HDLC_U_SABME)
+        CASENTRY(HDLC_U_RSET)
+        CASENTRY(HDLC_U_XID)
+        CASENTRY(HDLC_U_SNRME)
+        CASENTRY(HDLC_U_TEST)
+        CASENTRY(HDLC_U_UIH)
+    }
+    elog("Unknown HDLC U-frame command: %d", cmd);
+    return NULL;
+}
+
 
 extern inline void HDLC_init(HDLC *hdlc);
 extern inline void HDLC_fini(HDLC *hdlc);
@@ -23,8 +76,6 @@ HDLC *HDLC_create() {
     return hdlc;
 }
 
-#define MAPENTRY(s)     [s] = #s
-
 static char const *hdlc_ctx_state_strmap[] = {
     MAPENTRY(HDLC_Initial),
     MAPENTRY(HDLC_FrameOpenFlag),
@@ -38,6 +89,7 @@ static char const *hdlc_ctx_state_strmap[] = {
     MAPENTRY(HDLC_SA_2),
     MAPENTRY(HDLC_SA_3),
     MAPENTRY(HDLC_SA),
+    MAPENTRY(HDLC_Control),
 
     MAPENTRY(HDLC_Complete),
 };
@@ -223,7 +275,33 @@ int HDLC_CTX_update(struct hdlc_ctx *ctx, FILE *fp) {
             ctx->state = HDLC_SA;
             log("  [hdlc] Lower SA: %d", ctx->hdlc->SA_lower);
         } else if (ctx->state == HDLC_SA) {
-            
+            int pf = (c >> 4) & 1U;
+            switch (c & 3U) {
+                case 1:
+                    ctx->hdlc->control.s.type = HDLC_S;
+                    ctx->hdlc->control.s.cmd = c & 0x0fU;
+                    ctx->hdlc->control.s.nr = (c >> 5) & 0x07U;
+                    ctx->hdlc->control.s.pf = pf;
+                    log("  [hdlc] control -> {type = %s, cmd = %s, N(R) = %"
+                        PRIi16 ", P/F = %" PRIu8 "}"
+                        , HDLC_strtype(ctx->hdlc->control.s.type)
+                        , HDLC_s_strcmd(ctx->hdlc->control.s.cmd)
+                        , ctx->hdlc->control.s.nr
+                        , ctx->hdlc->control.s.pf
+                    );
+                    break;
+                case 3:
+                    ctx->hdlc->control.u.type = HDLC_U;
+                    ctx->hdlc->control.u.cmd = c & 0xefU;
+                    ctx->hdlc->control.u.pf = pf;
+                    break;
+                default:
+                    ctx->hdlc->control.i.type = HDLC_I;
+                    ctx->hdlc->control.i.ns = (c >> 1) & 0x07U;
+                    ctx->hdlc->control.i.nr = (c >> 5) & 0x07U;
+                    ctx->hdlc->control.i.pf = pf;
+            }
+            ctx->state = HDLC_Control;
         } else {
             /* ... */
         }
@@ -246,7 +324,7 @@ int HDLC_CTX_update(struct hdlc_ctx *ctx, FILE *fp) {
      * Адрес Calling используется для организации инициативных сообщений о
      * событиях от вторичной станции к первичной.
      */
-    ...
+    /* ... */
 
     assert(ctx->state == HDLC_Initial || ctx->state == HDLC_Complete);
     return ctx->hdlc->length;
