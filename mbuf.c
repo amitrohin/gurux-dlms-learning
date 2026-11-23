@@ -5,7 +5,7 @@
 
 extern inline void mbuf_init(struct mbuf *mb);
 extern inline void mbuf_fini(struct mbuf *mb);
-extern inline struct mbuf *mbuf_attach(struct mbuf *mb);
+extern inline struct mbuf * mbuf_attach(struct mbuf *mb);
 extern inline void mbuf_detach(struct mbuf *mb);
 
 struct mbuf *mbuf_create(size_t size) {
@@ -43,6 +43,7 @@ int mbuf_resize(struct mbuf *mb, size_t size) {
 
 extern inline int mbuf_reserve(struct mbuf *mb, size_t size);
 extern inline void mbuf_reset(struct mbuf *mb);
+extern inline size_t mbuf_len(struct mbuf *mb);
 
 int mbuf_addc(struct mbuf *mb, int c) {
     if (mb->len == mb->cap) {

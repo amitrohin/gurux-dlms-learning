@@ -5,6 +5,7 @@ PROGS := spodes x2b
 SRCS.spodes += main.c
 SRCS.spodes += foo.c
 SRCS.spodes += mbuf.c
+SRCS.spodes += crc.c
 SRCS.spodes += hdlc.c
 
 SRCS.x2b += x2b.c

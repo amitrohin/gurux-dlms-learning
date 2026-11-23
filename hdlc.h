@@ -1,3 +1,4 @@
+// vi: ts=4:sts=4:sw=4:et:nu:syn=off:noai:nosi
 
 #ifndef __SPODES_HDLC_H__
 #define __SPODES_HDLC_H__
@@ -6,6 +7,7 @@
 
 #include "foo.h"
 #include "mbuf.h"
+#include "crc.h"
 
 enum hdlc_type { HDLC_I, HDLC_S, HDLC_U };
 
@@ -78,6 +80,7 @@ union hdlc_control {
 
 typedef struct hdlc {
     int nref;
+    struct mbuf frame;
     int16_t length;         /* 13 бит */
     int16_t DA_upper;       /* 7 или 14 бит */
     int16_t DA_lower;       /* 7 или 14 бит */
@@ -85,37 +88,56 @@ typedef struct hdlc {
     int16_t SA_lower;       /* 7 или 14 бит */
     uint8_t fragment_bit;   /* 1 bit */
     union hdlc_control control;
+    int16_t payload_offset;
+    int16_t payload_len;
+    int16_t llc_dsap;       /* 1 byte - 0x6e */
+    int16_t llc_ssap;       /* 1 byte - 0x6e, 0x7e */
+    int16_t llc_control;    /* 1 byte - 0 */
+    struct hdlc *next, *prev;
 } HDLC;
 
-#define HDLC_INITIALIZER \
-    { \
+#define HDLC_INITIALIZER(hdlc_p) { \
         .nref = 1, \
-        .fragment_bit = 0, \
         .length = 0, \
         .DA_upper = -1, \
         .DA_lower = -1, \
         .SA_upper = -1, \
         .SA_lower = -1, \
-        .frame_subtype = -1, \
-        .pf_bit = -1, \
+        .fragment_bit = 0, \
+        .control = {.type = -1}, \
+        .payload_offset = -1, \
+        .payload_len = -1, \
+        .llc_dsap = -1, \
+        .llc_ssap = -1, \
+        .llc_control = -1, \
+        .next = hdlc_p, \
+        .prev = hdlc_p \
     }
 
 inline
 void        HDLC_init(HDLC *hdlc)
 {
     hdlc->nref = 1;
-    hdlc->fragment_bit = 0;
     hdlc->length = 0;
     hdlc->DA_upper = -1;
     hdlc->DA_lower = -1;
     hdlc->SA_upper = -1;
     hdlc->SA_lower = -1;
+    hdlc->fragment_bit = 0;
+    hdlc->control.type = -1;
+    hdlc->payload_offset = -1;
+    hdlc->payload_len = -1;
+    hdlc->llc_dsap = -1;
+    hdlc->llc_ssap = -1;
+    hdlc->next = hdlc->prev = hdlc;
 }
 
 inline
 void        HDLC_fini(HDLC *hdlc)
 {
     assert(hdlc->nref == 1);
+    hdlc->prev->next = hdlc->next;
+    hdlc->next->prev = hdlc->prev;
 }
 
 inline
@@ -138,30 +160,36 @@ void        HDLC_detach(HDLC *hdlc)
 
 HDLC *      HDLC_create();
 
-
 enum hdlc_ctx_state {
     HDLC_Initial,           /* состояние перед чтением данных */
     HDLC_FrameOpenFlag,     /* прочитан маркер начала кадра 0x7e */
     HDLC_FrameFormat_1,     /* разобран первый байт */
     HDLC_FrameFormat,       /* прочитан второй байт (все поле) */
-    HDLC_DA_1,
-    HDLC_DA_2,
-    HDLC_DA_3,
-    HDLC_DA,
-    HDLC_SA_1,
-    HDLC_SA_2,
-    HDLC_SA_3,
-    HDLC_SA,
-    HDLC_Control,
-    HDLC_Complete,          /* пакет полностью прочитан */
+    HDLC_DA_1,              /* прочитан 1-й байт адреса получателя (младший бит == 0) */
+    HDLC_DA_2,              /* прочитан 2-й байт адреса получателя (младший бит == 0) */
+    HDLC_DA_3,              /* прочитан 3-й байт адреса получателя (младший бит == 0) */
+    HDLC_DA,                /* адрес получателя прочитан полностью (младший бит == 1, 1..4 байта) */
+    HDLC_SA_1,              /* прочитан 1-й байт адреса отправителя (младший бит == 0) */
+    HDLC_SA_2,              /* прочитан 2-й байт адреса отправителя (младший бит == 0) */
+    HDLC_SA_3,              /* прочитан 3-й байт адреса отправителя (младший бит == 0) */
+    HDLC_SA,                /* адрес отправителя прочитан полностью (младший бит == 1, 1..4 байта) */
+    HDLC_Control,           /* прочитан байт Control */
+    HDLC_HCS_1,             /* прочитан 1-й байт HCS (младший) */
+    HDLC_HCS,               /* прочитан и проверен HCS (2 байта) */
+    HDLC_LLC_DSAP,
+    HDLC_LLC_SSAP,
+    HDLC_LLC_Control,
+    HDLC_Payload,           /* чтение информационного поля (LLC + APDU / параметры) */
+    HDLC_FCS_1,             /* прочитан 1-й байт FCS (младший) */
+    HDLC_FCS,               /* прочитан и проверен FCS (2 байта) */
+    HDLC_Complete,          /* пакет полностью прочитан (включая закрывающий 0x7e) */
 };
 char const *hdlc_ctx_strstate(enum hdlc_ctx_state state);
 
 typedef struct hdlc_ctx {
     int nref;
     enum hdlc_ctx_state state;
-    struct mbuf *pkt;
-    HDLC *hdlc;
+    TAILQ_HEAD(, ) hdlc_chain;
 } HDLC_CTX;
 
 int         HDLC_CTX_init(HDLC_CTX *ctx, struct mbuf *mb, HDLC *hdlc);
