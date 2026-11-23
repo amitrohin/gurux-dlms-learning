@@ -12,9 +12,14 @@ struct mbuf *mbuf_create(size_t size) {
     struct mbuf *mb;
 
     mb = malloc(sizeof(struct mbuf));
-    if (mb)
+    if (mb) {
         mbuf_init(mb);
-    else
+        if (mbuf_resize(mb, size)) {
+            elog("mbuf_resize()");
+            mbuf_detach(mb);
+            mb = NULL;
+        }
+    } else
         elog2(errno, "malloc(%zu)", sizeof(struct mbuf));
     return mb;
 }

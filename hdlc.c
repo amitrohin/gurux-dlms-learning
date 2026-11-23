@@ -412,7 +412,7 @@ int HDLC_CTX_update(HDLC_CTX *ctx, FILE *fp) {
             hdlc->llc_control = c;
             if (c)
                 log("  [hdlc.llc] WARNING: LLC Quality/Control байт всегда должен быть 0, но получен 0x%02x.", c);
-            ctx->state = HDLC_LLC_Control;
+            ctx->state = (hdlc->payload_len == 3) ? HDLC_Payload : HDLC_LLC_Control;
 
         } else if (ctx->state == HDLC_LLC_Control || ctx->state == HDLC_Payload_) {
             ctx->state = HDLC_Payload_;

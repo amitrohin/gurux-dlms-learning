@@ -48,7 +48,7 @@ int main(int argc, char *argv[]) {
             char const *fmt = "%s";
             if (*optarg != '/') 
                 fmt = "/dev/%s";
-            if (snprintf(line.dev, sizeof line.dev, fmt, optarg) >= sizeof line)
+            if (snprintf(line.dev, sizeof line.dev, fmt, optarg) >= sizeof line.dev)
                 egoto(E0, "%s: line too long.", optarg);
         } else if (c == 's') {
             if (getnum(&line.speed, optarg, 10))

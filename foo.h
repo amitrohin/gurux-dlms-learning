@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <stdarg.h>
 #include <assert.h>
+#include <limits.h>
 
 /* stringify without expanding x */
 #define FOO_STRING(x)                   #x  
@@ -60,19 +61,19 @@ void ossl_elog_ex(char const *file, int line, char const *func, char const *fmt,
 inline unsigned int ui_nextpow2(unsigned int x) {
     unsigned int n = 2;
     if (x > 1)
-        n = 1U << (sizeof(unsigned int) - __builtin_clz(x));
+        n = 1U << (sizeof(unsigned int) * CHAR_BIT - __builtin_clz(x - 1));
     return n;
 }
 inline unsigned long ul_nextpow2(unsigned long x) {
     unsigned long n = 2;
     if (x > 1)
-        n = 1UL << (sizeof(unsigned long) - __builtin_clzl(x));
+        n = 1UL << (sizeof(unsigned long) * CHAR_BIT - __builtin_clzl(x - 1));
     return n;
 }
 inline unsigned long long ull_nextpow2(unsigned long long x) {
     unsigned long long n = 2;
     if (x > 1)
-        n = 1ULL << (sizeof(unsigned long long) - __builtin_clzll(x));
+        n = 1ULL << (sizeof(unsigned long long) * CHAR_BIT - __builtin_clzll(x - 1));
     return n;
 }
 inline size_t zu_nextpow2(size_t x) {
