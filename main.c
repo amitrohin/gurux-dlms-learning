@@ -93,7 +93,7 @@ int main(int argc, char *argv[]) {
 
     static HDLC_CTX hdlc_ctx;
 
-    if (HDLC_CTX_init(&hdlc_ctx, NULL, NULL))
+    if (HDLC_CTX_init(&hdlc_ctx))
         egoto(E0, "HDLC_CTX_init()");
     HDLC_CTX_update(&hdlc_ctx, stdin);
 

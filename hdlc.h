@@ -96,28 +96,11 @@ typedef struct hdlc {
     struct hdlc *next, *prev;
 } HDLC;
 
-#define HDLC_INITIALIZER(hdlc_p) { \
-        .nref = 1, \
-        .length = 0, \
-        .DA_upper = -1, \
-        .DA_lower = -1, \
-        .SA_upper = -1, \
-        .SA_lower = -1, \
-        .fragment_bit = 0, \
-        .control = {.type = -1}, \
-        .payload_offset = -1, \
-        .payload_len = -1, \
-        .llc_dsap = -1, \
-        .llc_ssap = -1, \
-        .llc_control = -1, \
-        .next = hdlc_p, \
-        .prev = hdlc_p \
-    }
-
 inline
 void        HDLC_init(HDLC *hdlc)
 {
     hdlc->nref = 1;
+    mbuf_init(&hdlc->frame);
     hdlc->length = 0;
     hdlc->DA_upper = -1;
     hdlc->DA_lower = -1;
@@ -130,6 +113,8 @@ void        HDLC_init(HDLC *hdlc)
     hdlc->llc_dsap = -1;
     hdlc->llc_ssap = -1;
     hdlc->next = hdlc->prev = hdlc;
+    if (mbuf_resize(&hdlc->frame, 128))
+        elog("WARNING: Ошибка резервирования 128 байтов под hdlc фрейм.");
 }
 
 inline
@@ -179,6 +164,7 @@ enum hdlc_ctx_state {
     HDLC_LLC_DSAP,
     HDLC_LLC_SSAP,
     HDLC_LLC_Control,
+    HDLC_Payload_,          /* чтение информационного поля (LLC + APDU / параметры) */
     HDLC_Payload,           /* чтение информационного поля (LLC + APDU / параметры) */
     HDLC_FCS_1,             /* прочитан 1-й байт FCS (младший) */
     HDLC_FCS,               /* прочитан и проверен FCS (2 байта) */
@@ -189,11 +175,11 @@ char const *hdlc_ctx_strstate(enum hdlc_ctx_state state);
 typedef struct hdlc_ctx {
     int nref;
     enum hdlc_ctx_state state;
-    TAILQ_HEAD(, ) hdlc_chain;
+    HDLC *hdlc;
 } HDLC_CTX;
 
-int         HDLC_CTX_init(HDLC_CTX *ctx, struct mbuf *mb, HDLC *hdlc);
-void        HDLC_CTX_fini(struct hdlc_ctx *ctx);
+int         HDLC_CTX_init(HDLC_CTX *ctx);
+void        HDLC_CTX_fini(HDLC_CTX *ctx);
 
 inline
 HDLC_CTX *  HDLC_CTX_attach(HDLC_CTX *ctx)
@@ -214,7 +200,7 @@ void        HDLC_CTX_detach(HDLC_CTX *ctx)
         ctx->nref--;
 }
 
-HDLC_CTX *  HDLC_CTX_create(struct mbuf *pkt, HDLC *hdlc);
+HDLC_CTX *  HDLC_CTX_create();
 int         HDLC_CTX_update(struct hdlc_ctx *ctx, FILE *fp);
 
 #endif

@@ -92,6 +92,10 @@ static char const *hdlc_ctx_state_strmap[] = {
     MAPENTRY(HDLC_Control),
     MAPENTRY(HDLC_HCS_1),
     MAPENTRY(HDLC_HCS),
+    MAPENTRY(HDLC_LLC_DSAP),
+    MAPENTRY(HDLC_LLC_SSAP),
+    MAPENTRY(HDLC_LLC_Control),
+    MAPENTRY(HDLC_Payload_),
     MAPENTRY(HDLC_Payload),
     MAPENTRY(HDLC_FCS_1),
     MAPENTRY(HDLC_FCS),
@@ -104,52 +108,31 @@ char const *HDLC_CTX_strstate(enum hdlc_ctx_state state) {
     return hdlc_ctx_state_strmap[state];
 }
 
-int HDLC_CTX_init(HDLC_CTX *ctx, struct mbuf *pkt, HDLC *hdlc) {
+int HDLC_CTX_init(HDLC_CTX *ctx) {
     ctx->nref = 1;
     ctx->state = HDLC_Initial;
-    ctx->pkt = NULL;
-    ctx->hdlc = NULL;
-    if (!pkt) {
-        ctx->pkt = mbuf_create(128);
-        if (!ctx->pkt)
-            egoto(E0, "mbuf_create() failed.");
-        if (mbuf_reserve(ctx->pkt, 128))
-            egoto(E0, "mbuf_reserve() failed.");
-    } else
-        ctx->pkt = mbuf_attach(pkt);
-    if (!hdlc) {
-        ctx->hdlc = HDLC_create();
-        if (!ctx->hdlc)
-            egoto(E0, "HDLC_create() failed.");
-    } else
-        ctx->hdlc = HDLC_attach(hdlc);
+    ctx->hdlc = HDLC_create();
+    if (!ctx->hdlc)
+        eret(-1, "HDLC_create() failed.");
     return 0;
-
-E0: if (ctx->hdlc)
-        HDLC_detach(ctx->hdlc);
-    if (ctx->pkt)
-        mbuf_detach(ctx->pkt);
-    return -1;
 }
 
 void HDLC_CTX_fini(struct hdlc_ctx *ctx) {
     assert(ctx->nref == 1);
     if (ctx->hdlc)
         HDLC_detach(ctx->hdlc);
-    if (ctx->pkt)
-        mbuf_detach(ctx->pkt);
 }
 
 extern inline HDLC_CTX *HDLC_CTX_attach(HDLC_CTX *ctx);
 extern inline void HDLC_CTX_detach(HDLC_CTX *ctx);
 
-HDLC_CTX *HDLC_CTX_create(struct mbuf *pkt, HDLC *hdlc) {
+HDLC_CTX *HDLC_CTX_create() {
     HDLC_CTX *ctx;
 
     ctx = malloc(sizeof(HDLC_CTX));
     if (!ctx)
         egoto2(E0, errno, "malloc(%zu)", sizeof(HDLC_CTX));
-    if (HDLC_CTX_init(ctx, pkt, hdlc))
+    if (HDLC_CTX_init(ctx))
         egoto(E0, "HDLC_CTX_init() failed.");
     return ctx;
 
@@ -158,8 +141,14 @@ E0: if (ctx)
     return NULL;
 }
 
-int HDLC_CTX_update(struct hdlc_ctx *ctx, FILE *fp) {
+int HDLC_CTX_update(HDLC_CTX *ctx, FILE *fp) {
+    /* hdlc - указывает на структуру, в которую мы читаем пакет.
+     * [!] В случае кольцевого списка из одного элемента, это сам элемент.
+     */
+    HDLC *hdlc = ctx->hdlc->prev;
+
     while (1) {
+        /* ctx->state - это состояние чтения пакета, на который указывает hdlc */
         enum hdlc_ctx_state state = ctx->state;
         int c = getc_unlocked(fp);
         log("0x%02x", c);
@@ -171,6 +160,7 @@ int HDLC_CTX_update(struct hdlc_ctx *ctx, FILE *fp) {
                 }
                 egoto2(E0, errno, "getc_unlocked()");
             } else if (feof(fp)) {
+                /* XXX */
                 if (ctx->state == HDLC_Initial)
                     break;
                 assert(ctx->state != HDLC_Complete);
@@ -179,7 +169,11 @@ int HDLC_CTX_update(struct hdlc_ctx *ctx, FILE *fp) {
             }
         }
         c &= 0xff;
-        if (mbuf_addc(ctx->pkt, c) < 0)
+        if (!mbuf_len(&hdlc->frame)) {
+            if (mbuf_resize(&hdlc->frame, 128))
+                elog("WARNING: Не получилось зарезервировать 128 байтов под фрейм hdlc.");
+        }
+        if (mbuf_addc(&hdlc->frame, c) < 0)
             egoto2(E0, errno, "mbuf_addc()");
 
         if (ctx->state == HDLC_Initial) {
@@ -192,25 +186,25 @@ int HDLC_CTX_update(struct hdlc_ctx *ctx, FILE *fp) {
             if ((c & 0xf0) != 0xa0)
                 egoto2_set(E0, EINVAL, "Ожидается hdlc frame format 3: "
                     "(frame[1] & 0xf0) == 0xa0, но 0x%02x != 0xa0", c & 0xf0);
-            ctx->hdlc->fragment_bit = ((c >> 3) & 1);
-            ctx->hdlc->length = ((c & 0x07) << 8);
+            hdlc->fragment_bit = ((c >> 3) & 1);
+            hdlc->length = ((c & 0x07) << 8);
             ctx->state = HDLC_FrameFormat_1;
             log("  [hdlc] Frame Type 3");
-            log("  [hdlc] S (fragment_bit): %d", ctx->hdlc->fragment_bit);
+            log("  [hdlc] S (fragment_bit): %d", hdlc->fragment_bit);
 
         } else if (ctx->state == HDLC_FrameFormat_1) {
-            ctx->hdlc->length |= c;
+            hdlc->length |= c;
             ctx->state = HDLC_FrameFormat;
-            log("  [hdlc] frame length: %d", ctx->hdlc->length);
+            log("  [hdlc] frame length: %d", hdlc->length);
 
         } else if (ctx->state == HDLC_FrameFormat) {
-            ctx->hdlc->DA_upper = (c >> 1);
-            ctx->hdlc->DA_lower = -1;
+            hdlc->DA_upper = (c >> 1);
+            hdlc->DA_lower = -1;
             if (c & 1) {
                 /* однобайтовый формат DA */
                 ctx->state = HDLC_DA;
-                log("  [hdlc] Upper DA: %d", ctx->hdlc->DA_upper);
-                log("  [hdlc] Lower DA: none");
+                log("  [hdlc] Upper DA: %d", hdlc->DA_upper);
+                log("  [hdlc] Lower DA: <не используется>");
             } else {
                 /* многобайтовый DA */
                 ctx->state = HDLC_DA_1;
@@ -219,14 +213,14 @@ int HDLC_CTX_update(struct hdlc_ctx *ctx, FILE *fp) {
         } else if (ctx->state == HDLC_DA_1) {
             if (c & 1) {
                 /* двубайтовый формат upper+lower */
-                ctx->hdlc->DA_lower = (c >> 1);
+                hdlc->DA_lower = (c >> 1);
                 ctx->state = HDLC_DA;
-                log("  [hdlc] Upper DA: %d", ctx->hdlc->DA_upper);
-                log("  [hdlc] Lower DA: %d", ctx->hdlc->DA_lower);
+                log("  [hdlc] Upper DA: %d", hdlc->DA_upper);
+                log("  [hdlc] Lower DA: %d", hdlc->DA_lower);
             } else {
-                ctx->hdlc->DA_upper = ((ctx->hdlc->DA_upper << 7) | (c >> 1));
+                hdlc->DA_upper = ((hdlc->DA_upper << 7) | (c >> 1));
                 ctx->state = HDLC_DA_2;
-                log("  [hdlc] Upper DA: %d", ctx->hdlc->DA_upper);
+                log("  [hdlc] Upper DA: %d", hdlc->DA_upper);
             }
 
         } else if (ctx->state == HDLC_DA_2) {
@@ -234,7 +228,7 @@ int HDLC_CTX_update(struct hdlc_ctx *ctx, FILE *fp) {
                 egoto2_set(E0, EINVAL, "hdlc адрес не может заканчиваться "
                     "на третьем байте (т.е. младший бит в третьем байте не "
                     "может быть 1).");
-            ctx->hdlc->DA_lower = (c >> 1);
+            hdlc->DA_lower = (c >> 1);
             ctx->state = HDLC_DA_3;
 
         } else if (ctx->state == HDLC_DA_3) {
@@ -242,18 +236,18 @@ int HDLC_CTX_update(struct hdlc_ctx *ctx, FILE *fp) {
                 egoto2_set(E0, EINVAL, "hdlc адрес не может быть длиннее "
                     "четырех байтов (т.е. младший бит в четвертом байте не "
                     "должен быть 0).");
-            ctx->hdlc->DA_lower = ((ctx->hdlc->DA_lower << 7) | (c >> 1));
+            hdlc->DA_lower = ((hdlc->DA_lower << 7) | (c >> 1));
             ctx->state = HDLC_DA;
-            log("  [hdlc] Lower DA: %d", ctx->hdlc->DA_lower);
+            log("  [hdlc] Lower DA: %d", hdlc->DA_lower);
 
         } else if (ctx->state == HDLC_DA) {
-            ctx->hdlc->SA_upper = (c >> 1);
-            ctx->hdlc->SA_lower = -1;
+            hdlc->SA_upper = (c >> 1);
+            hdlc->SA_lower = -1;
             if (c & 1) {
                 /* однобайтовый формат SA */
                 ctx->state = HDLC_SA;
-                log("  [hdlc] Upper SA: %d", ctx->hdlc->SA_upper);
-                log("  [hdlc] Lower SA: none");
+                log("  [hdlc] Upper SA: %d", hdlc->SA_upper);
+                log("  [hdlc] Lower SA: <не используется>");
             } else {
                 /* многобайтовый SA */
                 ctx->state = HDLC_SA_1;
@@ -262,14 +256,14 @@ int HDLC_CTX_update(struct hdlc_ctx *ctx, FILE *fp) {
         } else if (ctx->state == HDLC_SA_1) {
             if (c & 1) {
                 /* двубайтовый формат upper+lower */
-                ctx->hdlc->SA_lower = (c >> 1);
+                hdlc->SA_lower = (c >> 1);
                 ctx->state = HDLC_SA;
-                log("  [hdlc] Upper SA: %d", ctx->hdlc->SA_upper);
-                log("  [hdlc] Lower SA: %d", ctx->hdlc->SA_lower);
+                log("  [hdlc] Upper SA: %d", hdlc->SA_upper);
+                log("  [hdlc] Lower SA: %d", hdlc->SA_lower);
             } else {
-                ctx->hdlc->SA_upper = ((ctx->hdlc->SA_upper << 7) | (c >> 1));
+                hdlc->SA_upper = ((hdlc->SA_upper << 7) | (c >> 1));
                 ctx->state = HDLC_SA_2;
-                log("  [hdlc] Upper SA: %d", ctx->hdlc->SA_upper);
+                log("  [hdlc] Upper SA: %d", hdlc->SA_upper);
             }
 
         } else if (ctx->state == HDLC_SA_2) {
@@ -277,7 +271,7 @@ int HDLC_CTX_update(struct hdlc_ctx *ctx, FILE *fp) {
                 egoto2_set(E0, EINVAL, "hdlc адрес не может заканчиваться "
                     "на третьем байте (т.е. младший бит в третьем байте не "
                     "может быть 1).");
-            ctx->hdlc->SA_lower = (c >> 1);
+            hdlc->SA_lower = (c >> 1);
             ctx->state = HDLC_SA_3;
 
         } else if (ctx->state == HDLC_SA_3) {
@@ -285,47 +279,47 @@ int HDLC_CTX_update(struct hdlc_ctx *ctx, FILE *fp) {
                 egoto2_set(E0, EINVAL, "hdlc адрес не может быть длиннее "
                     "четырех байтов (т.е. младший бит в четвертом байте не "
                     "должен быть 0).");
-            ctx->hdlc->SA_lower = ((ctx->hdlc->SA_lower << 7) | (c >> 1));
+            hdlc->SA_lower = ((hdlc->SA_lower << 7) | (c >> 1));
             ctx->state = HDLC_SA;
-            log("  [hdlc] Lower SA: %d", ctx->hdlc->SA_lower);
+            log("  [hdlc] Lower SA: %d", hdlc->SA_lower);
 
         } else if (ctx->state == HDLC_SA) {
             int pf = (c >> 4) & 1U;
             switch (c & 3U) {
                 case 1:
-                    ctx->hdlc->control.s.type = HDLC_S;
-                    ctx->hdlc->control.s.cmd = c & 0x0fU;
-                    ctx->hdlc->control.s.nr = (c >> 5) & 0x07U;
-                    ctx->hdlc->control.s.pf = pf;
+                    hdlc->control.s.type = HDLC_S;
+                    hdlc->control.s.cmd = c & 0x0fU;
+                    hdlc->control.s.nr = (c >> 5) & 0x07U;
+                    hdlc->control.s.pf = pf;
                     log("  [hdlc] control -> {type = %s, cmd = %s, N(R) = %"
                         PRIi16 ", P/F = %" PRIu8 "}"
-                        , HDLC_strtype(ctx->hdlc->control.s.type)
-                        , HDLC_S_strcmd(ctx->hdlc->control.s.cmd)
-                        , ctx->hdlc->control.s.nr
-                        , ctx->hdlc->control.s.pf
+                        , HDLC_strtype(hdlc->control.s.type)
+                        , HDLC_S_strcmd(hdlc->control.s.cmd)
+                        , hdlc->control.s.nr
+                        , hdlc->control.s.pf
                     );
                     break;
                 case 3:
-                    ctx->hdlc->control.u.type = HDLC_U;
-                    ctx->hdlc->control.u.cmd = c & 0xefU;
-                    ctx->hdlc->control.u.pf = pf;
+                    hdlc->control.u.type = HDLC_U;
+                    hdlc->control.u.cmd = c & 0xefU;
+                    hdlc->control.u.pf = pf;
                     log("  [hdlc] control -> {type = %s, cmd = %s, P/F = %" PRIu8 "}"
-                        , HDLC_strtype(ctx->hdlc->control.u.type)
-                        , HDLC_U_strcmd(ctx->hdlc->control.u.cmd)
-                        , ctx->hdlc->control.u.pf
+                        , HDLC_strtype(hdlc->control.u.type)
+                        , HDLC_U_strcmd(hdlc->control.u.cmd)
+                        , hdlc->control.u.pf
                     );
                     break;
                 default:
-                    ctx->hdlc->control.i.type = HDLC_I;
-                    ctx->hdlc->control.i.ns = (c >> 1) & 0x07U;
-                    ctx->hdlc->control.i.nr = (c >> 5) & 0x07U;
-                    ctx->hdlc->control.i.pf = pf;
+                    hdlc->control.i.type = HDLC_I;
+                    hdlc->control.i.ns = (c >> 1) & 0x07U;
+                    hdlc->control.i.nr = (c >> 5) & 0x07U;
+                    hdlc->control.i.pf = pf;
                     log("  [hdlc] control -> {type = %s, N(R) = %"
                         PRIi16 ", N(S) = %" PRIi16 ", P/F = %" PRIu8 "}"
-                        , HDLC_strtype(ctx->hdlc->control.i.type)
-                        , ctx->hdlc->control.i.nr
-                        , ctx->hdlc->control.i.ns
-                        , ctx->hdlc->control.i.pf
+                        , HDLC_strtype(hdlc->control.i.type)
+                        , hdlc->control.i.nr
+                        , hdlc->control.i.ns
+                        , hdlc->control.i.pf
                     );
             }
             ctx->state = HDLC_Control;
@@ -334,64 +328,125 @@ int HDLC_CTX_update(struct hdlc_ctx *ctx, FILE *fp) {
             ctx->state = HDLC_HCS_1;
 
         } else if (ctx->state == HDLC_HCS_1) {
-            ctx->hdlc->payload_offset = mbuf_len(ctx->pkt);
+            hdlc->payload_offset = mbuf_len(&hdlc->frame);
             uint16_t cksum_orig =
-                (uint8_t)ctx->pkt->buf[ctx->pkt->len - 2] + 
-                (uint8_t)ctx->pkt->buf[ctx->pkt->len - 1] * 256U;
-            uint16_t cksum_calc = crc16((uint8_t *)(ctx->pkt->buf + 1),
-                ctx->hdlc->payload_offset - 2 /* hcs */ - 1 /* open flag 0x7e */);
+                (uint8_t)hdlc->frame.buf[hdlc->frame.len - 2] + 
+                (uint8_t)hdlc->frame.buf[hdlc->frame.len - 1] * 256U;
+            uint16_t cksum_calc = crc16((uint8_t *)(hdlc->frame.buf + 1),
+                hdlc->payload_offset - 2 /* hcs */ - 1 /* open flag 0x7e */);
             if (cksum_orig != cksum_calc)
-                egoto2_set(E0, EBADMSG, "Bad check sum (HDLC HCS)");
-            log("  [hdlc] HCS/FCS: cksum is ok");
+                egoto2_set(E0, EBADMSG, "Bad check sum (hdlc hcs)");
+            log("  [hdlc] hcs/fcs: cksum is ok");
             
             /* [!] Длина в пакете не считает первый и последний 0x7e.
              * [!] Пакет может не содержать payload-а. В этом случае поле hcs не используется.
              */
-            ctx->hdlc->payload_len = ctx->hdlc->length - (ctx->hdlc->payload_offset - 1);
-            log("  [hdlc] payload_offset = %hd, payload_len = %hd", ctx->hdlc->payload_offset, ctx->hdlc->payload_len);
+            hdlc->payload_len = hdlc->length - (hdlc->payload_offset - 1);
+            log("  [hdlc] payload_offset = %hd, payload_len = %hd", hdlc->payload_offset, hdlc->payload_len);
 
-            if (!ctx->hdlc->payload_len)
+            if (!hdlc->payload_len)
                 ;
-            else if (ctx->hdlc->payload_len > 2)
-                ctx->hdlc->payload_len -= 2;
+            else if (hdlc->payload_len > 2)
+                hdlc->payload_len -= 2;
             else
                 egoto2_set(E0, EBADMSG, "Длина полезной нагрузки не может "
                     "быть меньше 2 (какая-то ошибка кодирования) и не должна "
                     "быть равной 2 (пустое информационное поле, где есть обе "
                     "конрольные суммы подряд - hcs и fcs).");
-            ctx->state = ctx->hdlc->payload_len ? HDLC_HCS : HDLC_FCS;
+            ctx->state = hdlc->payload_len ? HDLC_HCS : HDLC_FCS;
 
         } else if (ctx->state == HDLC_HCS) {
-            /* DSAP - Destination Link Service Access Point */
-            if (c != 0x6e)
-                egoto2_set(E0, EBSDMSG, "Недопустимое значение Destination "
-                    "LSAP: 0x%02x (Должно всегда быть 0x6e).", c);
-            ctx->hdlc->llc_dsap = c;
-            ctx->state = HDLC_LLC_DSAP;
+            /* 1. I-frame: LLC-заголовок (E6 E6 00 / E6 E7 00) есть всегда в
+             *    первом (или единственном) кадре цепочки. Во 2-м, 3-м и
+             *    последующих сегментах той же цепочки LLC-заголовка уже нет.
+             * 2. S-frame: LLC-заголовка нет никогда (у этих кадров вообще
+             *    отсутствует информационное поле).
+             * 3. U-frame: LLC-заголовок есть только в кадрах типа UI
+             *    (Unnumbered Information, байт Control = 0x03 или 0x13 с
+             *    учетом P/F-бита). Во всех остальных U-frame (SNRM, UA, DISC,
+             *    DM, FRMR) LLC-заголовка нет.
+             */
+            int expect_llc = 0;
+            if (ctx->hdlc == hdlc) {
+                switch (hdlc->control.type) {
+                    case HDLC_S:
+                        break;
+                    case HDLC_U:
+                        if (hdlc->control.u.cmd != HDLC_U_UI)
+                            break;
+                        __attribute__((fallthrough));
+                    case HDLC_I:
+                        expect_llc = 1;
+                }
+            }
+            if (expect_llc) {
+                /* DSAP - Destination Link Service Access Point */
+                if (hdlc->payload_len < 3)
+                    egoto2_set(E0, EBADMSG, "Ожидается 3 байта заголовка "
+                        "llc, но размер пакета слишком мал (полезная "
+                        "нагрузка: %d)", hdlc->payload_len);
+                if (c != 0xe6)
+                    egoto2_set(E0, EBADMSG, "Недопустимое значение Destination "
+                        "LSAP: 0x%02x (Должно всегда быть 0xe6).", c);
+                hdlc->llc_dsap = c;
+                ctx->state = HDLC_LLC_DSAP;
+            } else {
+                ctx->state = HDLC_Payload_;
+                if (hdlc->payload_len == 1)
+                    ctx->state = HDLC_Payload;
+            }
 
         } else if (ctx->state == HDLC_LLC_DSAP) {
             /* SSAP - Source Link Service Access Point */
-            if (c != 0x6e && c != 0x7e)
-                egoto2_set(E0, EBSDMSG, "Недопустимое значение Source LSAP: "
-                    "0x%02x (Должно быть 0x6e или 0x7e).", c);
-            ctx->hdlc->llc_ssap = c;
+            /* 0xe6 - request, 0xe7 - response */
+            if (c != 0xe6 && c != 0xe7)
+                egoto2_set(E0, EBADMSG, "Недопустимое значение Source LSAP: "
+                    "0x%02x (Должно быть 0xe6 или 0xe7).", c);
+            hdlc->llc_ssap = c;
             ctx->state = HDLC_LLC_SSAP;
 
         } else if (ctx->state == HDLC_LLC_SSAP) {
             /* 3-й байт — LLC Quality (Control): 0x00 — зарезервированный
              * байт качества обслуживания (в DLMS всегда равен нулю).
              */
-            ctx->hdlc->llc_control = c;
+            hdlc->llc_control = c;
             if (c)
                 log("  [hdlc.llc] WARNING: LLC Quality/Control байт всегда должен быть 0, но получен 0x%02x.", c);
             ctx->state = HDLC_LLC_Control;
 
-        } else if (ctx->state == HDLC_LLC_Control) {
-            ctx->state = HDLC_Payload;
+        } else if (ctx->state == HDLC_LLC_Control || ctx->state == HDLC_Payload_) {
+            ctx->state = HDLC_Payload_;
+            assert(hdlc->payload_len);
+            assert(mbuf_len(&hdlc->frame) <= 1 + hdlc->length - 2);
+            if (mbuf_len(&hdlc->frame) == 1 + hdlc->length - 2)
+                ctx->state = HDLC_Payload;
 
-        } else {
-            /* ... */
-        }
+        } else if (ctx->state == HDLC_Payload) {
+            ctx->state = HDLC_FCS_1;
+
+        } else if (ctx->state == HDLC_FCS_1) {
+            uint16_t cksum_orig =
+                (uint8_t)hdlc->frame.buf[hdlc->frame.len - 2] + 
+                (uint8_t)hdlc->frame.buf[hdlc->frame.len - 1] * 256U;
+            uint16_t cksum_calc = crc16(hdlc->frame.buf + 1, hdlc->length - 2);
+            if (cksum_orig != cksum_calc)
+                egoto2_set(E0, EBADMSG, "Ошибка контрольной суммы кадра FCS: "
+                    "ожидалось 0x%04x, получено 0x%04x.", cksum_calc, cksum_orig);
+            log("  [hdlc] fcs: cksum is ok.");
+            ctx->state = HDLC_FCS;
+
+        } else if (ctx->state == HDLC_FCS) {
+           if (c != 0x7e)
+                egoto2_set(E0, EBADMSG, "Ожидается закрывающий флаг 0x7e, "
+                    "но прочитано 0x%02x.", c);
+            log("  [hdlc] Frame complete (len=%d, payload=%u)",
+                hdlc->length, hdlc->payload_len);
+            ctx->state = HDLC_Complete;
+            break;
+
+        } else
+            panic("Unhandled state: %s", HDLC_CTX_strstate(state));
+            
         log("  >>> %s -> %s", HDLC_CTX_strstate(state), HDLC_CTX_strstate(ctx->state));
     }
 
