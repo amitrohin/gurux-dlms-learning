@@ -93,7 +93,7 @@ typedef struct hdlc {
     int16_t llc_dsap;       /* 1 byte - 0xe6 */
     int16_t llc_ssap;       /* 1 byte - 0xe6, 0xe7 */
     int16_t llc_control;    /* 1 byte - 0 */
-    struct hdlc *next, *prev;
+    STAILQ_ENTRY(hdlc) ent;
 } HDLC;
 
 inline
@@ -113,7 +113,7 @@ void        HDLC_init(HDLC *hdlc)
     hdlc->llc_dsap = -1;
     hdlc->llc_ssap = -1;
     hdlc->llc_control = -1;
-    hdlc->next = hdlc->prev = hdlc;
+    STAILQ_NEXT(hdlc, ent) = NULL;
     if (mbuf_resize(&hdlc->frame, 128))
         elog("WARNING: Ошибка резервирования 128 байтов под hdlc фрейм.");
 }
