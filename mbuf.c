@@ -35,13 +35,15 @@ int mbuf_resize(struct mbuf *mb, size_t size) {
 
         cap = (size & (size - 1)) ? zu_nextpow2(size) : size;
         assert(cap != 0);
-        p = realloc(mb->buf, cap);
-        if (!p)
-            eret2(-1, errno, "malloc(): %zu bytes\n", cap);
-        mb->cap = cap;
-        if (mb->len > cap)
-            mb->len = cap;
-        mb->buf = p;
+        if (cap != mb->cap) {
+            p = realloc(mb->buf, cap);
+            if (!p)
+                eret2(-1, errno, "malloc(): %zu bytes\n", cap);
+            mb->cap = cap;
+            if (mb->len > cap)
+                mb->len = cap;
+            mb->buf = p;
+        }
     }
     return 0;
 }

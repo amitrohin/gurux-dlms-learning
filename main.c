@@ -93,10 +93,16 @@ int main(int argc, char *argv[]) {
 
     static HDLC_CTX hdlc_ctx;
 
-    if (HDLC_CTX_init(&hdlc_ctx))
-        egoto(E0, "HDLC_CTX_init()");
-    HDLC_CTX_update(&hdlc_ctx, stdin);
-
+    HDLC_CTX_init(&hdlc_ctx);
+    while (1) {
+        int rc = HDLC_CTX_update(&hdlc_ctx, stdin);
+        if (rc < 0)
+            elog("HDLC_CTX_update() failed.");
+        if (!rc)
+            break;
+        HDLC_CTX_reset(&hdlc_ctx);
+        /* HDLC_dump(HDLC_CTX_get_hdlc(&hdlc_ctx)); */
+    }
     HDLC_CTX_fini(&hdlc_ctx);
     return 0;
 

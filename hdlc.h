@@ -4,6 +4,7 @@
 #define __SPODES_HDLC_H__
 
 #include <stdint.h>
+#include <sys/queue.h>
 
 #include "foo.h"
 #include "mbuf.h"
@@ -90,52 +91,25 @@ typedef struct hdlc {
     union hdlc_control control;
     int16_t payload_offset;
     int16_t payload_len;
-    int16_t llc_dsap;       /* 1 byte - 0xe6 */
-    int16_t llc_ssap;       /* 1 byte - 0xe6, 0xe7 */
-    int16_t llc_control;    /* 1 byte - 0 */
     STAILQ_ENTRY(hdlc) ent;
 } HDLC;
 
-inline
-void        HDLC_init(HDLC *hdlc)
-{
-    hdlc->nref = 1;
-    mbuf_init(&hdlc->frame);
-    hdlc->length = 0;
-    hdlc->DA_upper = -1;
-    hdlc->DA_lower = -1;
-    hdlc->SA_upper = -1;
-    hdlc->SA_lower = -1;
-    hdlc->fragment_bit = 0;
-    hdlc->control.type = -1;
-    hdlc->payload_offset = -1;
-    hdlc->payload_len = -1;
-    hdlc->llc_dsap = -1;
-    hdlc->llc_ssap = -1;
-    hdlc->llc_control = -1;
-    STAILQ_NEXT(hdlc, ent) = NULL;
-    if (mbuf_resize(&hdlc->frame, 128))
-        elog("WARNING: Ошибка резервирования 128 байтов под hdlc фрейм.");
-}
+void        HDLC_init(HDLC *hdlc);
 
 inline
-void        HDLC_fini(HDLC *hdlc)
-{
+void        HDLC_fini(HDLC *hdlc) {
     assert(hdlc->nref == 1);
-    hdlc->prev->next = hdlc->next;
-    hdlc->next->prev = hdlc->prev;
+    mbuf_fini(&hdlc->frame);
 }
 
 inline
-HDLC *      HDLC_attach(HDLC *hdlc)
-{
+HDLC *      HDLC_attach(HDLC *hdlc) {
     hdlc->nref++;
     return hdlc;
 }
 
 inline
-void        HDLC_detach(HDLC *hdlc)
-{
+void        HDLC_detach(HDLC *hdlc) {
     assert(hdlc->nref > 0);
     if (hdlc->nref == 1) {
         HDLC_fini(hdlc);
@@ -144,7 +118,14 @@ void        HDLC_detach(HDLC *hdlc)
         hdlc->nref--;
 }
 
+inline
+int         HDLC_shared(HDLC *hdlc) {
+    assert(hdlc->nref > 0);
+    return (hdlc->nref == 1);
+}
+
 HDLC *      HDLC_create();
+void        HDLC_reset(HDLC *hdlc);
 
 enum hdlc_ctx_state {
     HDLC_Initial,           /* состояние перед чтением данных */
@@ -162,9 +143,6 @@ enum hdlc_ctx_state {
     HDLC_Control,           /* прочитан байт Control */
     HDLC_HCS_1,             /* прочитан 1-й байт HCS (младший) */
     HDLC_HCS,               /* прочитан и проверен HCS (2 байта) */
-    HDLC_LLC_DSAP,
-    HDLC_LLC_SSAP,
-    HDLC_LLC_Control,
     HDLC_Payload_,          /* чтение информационного поля (LLC + APDU / параметры) */
     HDLC_Payload,           /* чтение информационного поля (LLC + APDU / параметры) */
     HDLC_FCS_1,             /* прочитан 1-й байт FCS (младший) */
@@ -179,20 +157,18 @@ typedef struct hdlc_ctx {
     HDLC *hdlc;
 } HDLC_CTX;
 
-int         HDLC_CTX_init(HDLC_CTX *ctx);
+void        HDLC_CTX_init(HDLC_CTX *ctx);
 void        HDLC_CTX_fini(HDLC_CTX *ctx);
 
 inline
-HDLC_CTX *  HDLC_CTX_attach(HDLC_CTX *ctx)
-{
+HDLC_CTX *  HDLC_CTX_attach(HDLC_CTX *ctx) {
     assert(ctx->nref > 0);
     ctx->nref++;
     return ctx;
 }
 
 inline
-void        HDLC_CTX_detach(HDLC_CTX *ctx)
-{
+void        HDLC_CTX_detach(HDLC_CTX *ctx) {
     assert(ctx->nref > 0);
     if (ctx->nref == 1) {
         HDLC_CTX_fini(ctx);
@@ -201,7 +177,24 @@ void        HDLC_CTX_detach(HDLC_CTX *ctx)
         ctx->nref--;
 }
 
+inline
+int         HDLC_CTX_shared(HDLC_CTX *ctx) {
+    assert(ctx->nref > 0);
+    return (ctx->nref == 1);
+}
+
 HDLC_CTX *  HDLC_CTX_create();
-int         HDLC_CTX_update(struct hdlc_ctx *ctx, FILE *fp);
+int         HDLC_CTX_update(HDLC_CTX *ctx, FILE *fp);
+void        HDLC_CTX_reset(HDLC_CTX *ctx);
+
+typedef struct hdlc_msg {
+    int nref;
+    STAILQ_HEAD(, hdlc) head;
+    int16_t llc_dsap;       /* 1 byte - 0xe6 */
+    int16_t llc_ssap;       /* 1 byte - 0xe6, 0xe7 */
+    int16_t llc_control;    /* 1 byte - 0 */
+} HDLC_MSG;
+
+
 
 #endif
