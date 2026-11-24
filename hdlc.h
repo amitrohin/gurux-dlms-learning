@@ -195,6 +195,4 @@ typedef struct hdlc_msg {
     int16_t llc_control;    /* 1 byte - 0 */
 } HDLC_MSG;
 
-
-
 #endif

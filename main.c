@@ -91,19 +91,43 @@ int main(int argc, char *argv[]) {
     fclose(line.fp);
 #endif
 
-    static HDLC_CTX hdlc_ctx;
+    static HDLC_CTX hdlc_ctx[1];
+    static HDLC *hdlc;
 
-    HDLC_CTX_init(&hdlc_ctx);
+    /* hdlc_conn = HDLC_connect(); */
+
+    HDLC_CTX_init(hdlc_ctx);
     while (1) {
-        int rc = HDLC_CTX_update(&hdlc_ctx, stdin);
+        int rc = HDLC_CTX_update(hdlc_ctx, stdin);
         if (rc < 0)
             elog("HDLC_CTX_update() failed.");
         if (!rc)
             break;
-        HDLC_CTX_reset(&hdlc_ctx);
-        /* HDLC_dump(HDLC_CTX_get_hdlc(&hdlc_ctx)); */
+        hdlc = HDLC_attach(hdlc_ctx->hdlc);
+        assert(hdlc);
+        HDLC_CTX_reset(hdlc_ctx);  /* HDLC_Complete -> HDLC_Initial */
+
+        /* HDLC_dump(hdlc); */
+        HDLC_detach(hdlc);
+
+#if 0
+        HDLC_SC_INDEX hdlc_sc_index = {
+            hdlc->DA_upper, hdlc->DA_lower, hdlc->SA_upper, hdlc->SA_lower,
+        };
+
+        sess = HDLC_SC_search(hdlc_sc, &hdlc_sc_index);
+        if (!sess)
+            sess = HDLC_SESS_create(hdlc_sc_index);
+
+        rc = HDLC_SESS_update(sess, hdlc);
+        if (rc < 0)
+            elog("HDLC_SESS_update() failed.");
+
+
+        HDLC_SESS_get_message()
+#endif
     }
-    HDLC_CTX_fini(&hdlc_ctx);
+    HDLC_CTX_fini(hdlc_ctx);
     return 0;
 
 E0: 
@@ -115,7 +139,7 @@ E0:
         fclose(line.fp);
 #endif
 
-    HDLC_CTX_fini(&hdlc_ctx);
+    HDLC_CTX_fini(hdlc_ctx);
     return -1;
 }
 
