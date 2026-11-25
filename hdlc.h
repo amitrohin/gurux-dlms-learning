@@ -79,6 +79,7 @@ union hdlc_control {
     struct hdlc_control_u u;
 };
 
+
 typedef struct hdlc {
     int nref;
     struct mbuf frame;

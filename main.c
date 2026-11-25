@@ -91,10 +91,87 @@ int main(int argc, char *argv[]) {
     fclose(line.fp);
 #endif
 
+    /*
+
+    typedef struict hdlc_sess {
+        int16_t DA_upper;
+        int16_t DA_lower;
+        int16_t SA_upper;
+        int16_t SA_lower;
+        uint8_t ns;
+        uint8_t nr;
+    } HDLC_SESS;
+
+    HDLC_SESS hdlc_sess[1];
+    HDLC hdlc[1];
+    int kq;
+    struct kevent kev[2];
+
+    kq = kqueue();
+    if (kq < 0)
+        egoto2(E0, errno, "kqueue()");
+    EV_SET(&kev[0], fileno(fp), EVFILT_READ,  EV_ADD|EV_DISABLE, 0, 0, NULL);
+    EV_SET(&kev[1], fileno(fp), EVFILT_WRITE, EV_ADD|EV_DISABLE, 0, 0, NULL);
+    rc = kevent(kq, kev, sizeof kev/sizeof kev[0], kev, sizeof kev/sizeof kev[0], NULL);
+    if (rc < 0)
+        egoto2(E0, errno, "kevent()");
+    for (int i = 0; i < rc; i++)
+        if (kev[i].flags & EV_ERROR)
+            egoto2_set(E0, (int)kev[i].data, "Не получилось создать событие %s.", 
+                kev[i].filter == EVFILT_READ ? "чтения из потока" : "записи в поток");
+
+    HDLC_SESS_init2(hdlc_sess, 1, 8574, 16, -1);
+    HDLC_init(hdlc);
+
+    hdlc->DA_upper = hdlc_sess->DA_upper;
+    hdlc->DA_lower = hdlc_sess->DA_lower;
+    hdlc->SA_upper = hdlc_sess->SA_upper;
+    hdlc->SA_lower = hdlc_sess->SA_lower;
+    hdlc->fragment_bit = 0;
+    hdlc->control.type = HDLC_U;
+    hdlc->control.u.cmd = HDLC_U_SNRM;
+    hdlc->control.u.pf = 1;
+
+    if (DHLC_build_frame(hdlc, payload, payload_len))
+        egoto(E0, "DHLC_build_frame() failed.");
+
+    HDLC_dump_frame(hdlc);
+
+
+
+    buf = hdlc->frame.buf;
+    len = hdlc->frame.len;
+    while (1) {
+        if (len) {
+            size_t n = fwrite(buf, 1, len, fp);
+            buf += n;
+            len -= n;
+        }
+        if (!len)
+            if (!fflush(fp))
+                break;
+        assert(ferror(fp));
+        if (errno == EPIPE)
+            break;
+        if (errno != EAGAIN)
+            egoto2(E0, errno, "fflush()")
+        clearerr(fp);
+        EV_SET(kev, fileno(fp), EVFILT_WRITE, EV_ENABLE|EV_DISPATCH, 0, 0, NULL);
+        rc = kevent(kq, &kev[0], 1, &kev[0], 1, NULL);
+        if (rc < 0)
+            egoto2(E0, errno, "kevent()");
+        assert(rc);
+        if (kev[0].flags & EV_ERROR)
+            egoto2_set(E0, (int)kev[0].data, "Не получилось активировать событие записи в поток.");
+    }
+
+
+    HDLC_fini(hdlc);
+    HDLC_SESS_fini(hdlc_sess);
+    */
+
     static HDLC_CTX hdlc_ctx[1];
     static HDLC *hdlc;
-
-    /* hdlc_conn = HDLC_connect(); */
 
     HDLC_CTX_init(hdlc_ctx);
     while (1) {

@@ -77,6 +77,7 @@ void HDLC_init(HDLC *hdlc) {
         elog("WARNING: Ошибка резервирования 128 байтов под hdlc фрейм.");
 }
 
+
 extern inline void HDLC_fini(HDLC *hdlc);
 extern inline HDLC *HDLC_attach(HDLC *hdlc);
 extern inline void HDLC_detach(HDLC *hdlc);
