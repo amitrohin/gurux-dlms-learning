@@ -121,7 +121,7 @@ void        HDLC_detach(HDLC *hdlc) {
 inline
 int         HDLC_shared(HDLC *hdlc) {
     assert(hdlc->nref > 0);
-    return (hdlc->nref == 1);
+    return (hdlc->nref != 1);
 }
 
 HDLC *      HDLC_create();
@@ -180,7 +180,7 @@ void        HDLC_CTX_detach(HDLC_CTX *ctx) {
 inline
 int         HDLC_CTX_shared(HDLC_CTX *ctx) {
     assert(ctx->nref > 0);
-    return (ctx->nref == 1);
+    return (ctx->nref != 1);
 }
 
 HDLC_CTX *  HDLC_CTX_create();

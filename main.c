@@ -105,6 +105,7 @@ int main(int argc, char *argv[]) {
             break;
         hdlc = HDLC_attach(hdlc_ctx->hdlc);
         assert(hdlc);
+
         HDLC_CTX_reset(hdlc_ctx);  /* HDLC_Complete -> HDLC_Initial */
 
         /* HDLC_dump(hdlc); */

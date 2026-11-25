@@ -95,8 +95,9 @@ HDLC *HDLC_create() {
 }
 
 void HDLC_reset(HDLC *hdlc) {
+    assert(hdlc->nref > 0);
     if (hdlc->nref != 1)
-        panic("Сбрасывать структуру можно только при кол-ве ссылок 1.");
+        panic("Очистить буфер можно только если на него никто кроме нас не ссылается.");
     assert(hdlc->frame.nref == 1);
     mbuf_reset(&hdlc->frame);
     hdlc->length = 0;
@@ -169,6 +170,9 @@ HDLC_CTX *HDLC_CTX_create() {
 }
 
 void HDLC_CTX_reset(HDLC_CTX *ctx) {
+    assert(ctx->nref > 0);
+    if (ctx->nref != 1)
+        panic("Очистить HDLC_CTX можно только если на него никто кроме нас не ссылается.");
     ctx->state = HDLC_Initial;
     if (ctx->hdlc) {
         if (HDLC_shared(ctx->hdlc)) {
