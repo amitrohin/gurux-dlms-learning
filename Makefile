@@ -7,6 +7,7 @@ SRCS.spodes += foo.c
 SRCS.spodes += mbuf.c
 SRCS.spodes += crc.c
 SRCS.spodes += hdlc.c
+SRCS.spodes += io.c
 
 SRCS.x2b += x2b.c
 

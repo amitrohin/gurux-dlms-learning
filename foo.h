@@ -114,4 +114,7 @@ inline void fmemopen_ex_reset(struct fmemctl *ctl) {
     ctl->len = ctl->pos = 0;
 }
 
+
+FILE *dup_fp(FILE *fp, char const *mode);
+
 #endif

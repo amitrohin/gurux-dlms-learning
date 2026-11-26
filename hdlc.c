@@ -72,7 +72,12 @@ void HDLC_init(HDLC *hdlc) {
     hdlc->control.type = -1;
     hdlc->payload_offset = -1;
     hdlc->payload_len = -1;
+    hdlc->llc_dsap = -1;
+    hdlc->llc_ssap = -1;
+    hdlc->llc_control = -1;
     STAILQ_NEXT(hdlc, ent) = NULL;
+    hdlc->frag_role = HDLC_FRAG_NONE;
+    STAILQ_INIT(&hdlc->frag_head);
     if (mbuf_resize(&hdlc->frame, 128))
         elog("WARNING: Ошибка резервирования 128 байтов под hdlc фрейм.");
 }
@@ -184,7 +189,7 @@ void HDLC_CTX_reset(HDLC_CTX *ctx) {
     }
 }
 
-int HDLC_CTX_update(HDLC_CTX *ctx, FILE *fp) {
+int HDLC_CTX_update(HDLC_CTX *ctx, IO *io) {
     HDLC *hdlc;
 
     hdlc = ctx->hdlc;
@@ -213,21 +218,19 @@ int HDLC_CTX_update(HDLC_CTX *ctx, FILE *fp) {
     while (1) {
         /* ctx->state - это состояние чтения пакета, на который указывает hdlc */
         enum hdlc_ctx_state state = ctx->state;
-        int c = getc_unlocked(fp);
+        int c = IO_getc(io);
         log("0x%02x", c);
         if (c < 0) {
-            if (ferror(fp)) {
-                if (errno == EAGAIN || errno == EINTR) {
-                    clearerr(fp);
-                    goto E0;
-                }
-                egoto2(E0, errno, "getc_unlocked()");
-            } else if (feof(fp)) {
+            if (!errno) {   /* [!] EOF определяется по errno 0. */
                 if (state == HDLC_Initial)
                     break;
                 assert(state != HDLC_Complete);
                 egoto2_set(E0, EBADMSG, "Unexpected end of file: not enough "
                     "data to complete the HDLC frame.");
+            } else {
+                if (errno != EAGAIN && errno != EINTR)
+                    elog2(errno, "IO_getc()");
+                goto E0;
             }
         }
         c &= 0xff;
@@ -477,11 +480,9 @@ int HDLC_CTX_update(HDLC_CTX *ctx, FILE *fp) {
 
     int rc;
 
-    assert(!ferror(fp));
-    if (ctx->state == HDLC_Initial) {
-        assert(feof(fp));
+    if (ctx->state == HDLC_Initial)
         rc = 0;
-    } else if (ctx->state == HDLC_Complete)
+    else if (ctx->state == HDLC_Complete)
         rc = 1;
 #if 0
     else

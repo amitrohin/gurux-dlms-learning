@@ -9,6 +9,7 @@
 #include "foo.h"
 #include "mbuf.h"
 #include "crc.h"
+#include "io.h"
 
 enum hdlc_type { HDLC_I, HDLC_S, HDLC_U };
 
@@ -80,10 +81,15 @@ union hdlc_control {
 };
 
 
+enum hdlc_frag_role {
+    HDLC_FRAG_NONE, /* обычный hdlc, не входит в цепочку фрагментов */
+    HDLC_FRAG_HEAD, /* цепочка фрагментов, первый узел */
+    HDLC_FRAG_PART, /* цепочка фрагментов, не головной узел */
+};
 typedef struct hdlc {
     int nref;
     struct mbuf frame;
-    int16_t length;         /* 13 бит */
+    int16_t length;         /* 11 бит */
     int16_t DA_upper;       /* 7 или 14 бит */
     int16_t DA_lower;       /* 7 или 14 бит */
     int16_t SA_upper;       /* 7 или 14 бит */
@@ -92,25 +98,55 @@ typedef struct hdlc {
     union hdlc_control control;
     int16_t payload_offset;
     int16_t payload_len;
+    int16_t llc_dsap;       /* 0xe6 */
+    int16_t llc_ssap;       /* 0xe6, 0xe7 */
+    int16_t llc_control;    /* 0 */
     STAILQ_ENTRY(hdlc) ent;
+    enum hdlc_frag_role frag_role;
+    union {
+        STAILQ_HEAD(, hdlc) frag_head;
+        STAILQ_ENTRY(hdlc) frag_ent;
+    };
 } HDLC;
 
 void        HDLC_init(HDLC *hdlc);
 
 inline
+void HDLC_detach(HDLC *hdlc);
+
+inline
 void        HDLC_fini(HDLC *hdlc) {
+    assert(hdlc);
     assert(hdlc->nref == 1);
     mbuf_fini(&hdlc->frame);
+    switch (hdlc->frag_role) {
+        case HDLC_FRAG_NONE:
+            break;
+        case HDLC_FRAG_HEAD: {
+            HDLC *p = STAILQ_FIRST(&hdlc->frag_head);
+            while (p) {
+                HDLC *q = STAILQ_NEXT(p, frag_ent);
+                HDLC_detach(p);
+                p = q;
+            }
+            break;
+        }
+        case HDLC_FRAG_PART:
+            break;
+    }
 }
 
 inline
 HDLC *      HDLC_attach(HDLC *hdlc) {
+    assert(hdlc);
+    assert(hdlc->nref > 0);
     hdlc->nref++;
     return hdlc;
 }
 
 inline
 void        HDLC_detach(HDLC *hdlc) {
+    assert(hdlc);
     assert(hdlc->nref > 0);
     if (hdlc->nref == 1) {
         HDLC_fini(hdlc);
@@ -121,6 +157,7 @@ void        HDLC_detach(HDLC *hdlc) {
 
 inline
 int         HDLC_shared(HDLC *hdlc) {
+    assert(hdlc);
     assert(hdlc->nref > 0);
     return (hdlc->nref != 1);
 }
@@ -185,15 +222,7 @@ int         HDLC_CTX_shared(HDLC_CTX *ctx) {
 }
 
 HDLC_CTX *  HDLC_CTX_create();
-int         HDLC_CTX_update(HDLC_CTX *ctx, FILE *fp);
+int         HDLC_CTX_update(HDLC_CTX *ctx, IO *io);
 void        HDLC_CTX_reset(HDLC_CTX *ctx);
-
-typedef struct hdlc_msg {
-    int nref;
-    STAILQ_HEAD(, hdlc) head;
-    int16_t llc_dsap;       /* 1 byte - 0xe6 */
-    int16_t llc_ssap;       /* 1 byte - 0xe6, 0xe7 */
-    int16_t llc_control;    /* 1 byte - 0 */
-} HDLC_MSG;
 
 #endif

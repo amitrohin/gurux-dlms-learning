@@ -189,3 +189,31 @@ FILE *fmemopen_ex(
 }
 
 extern inline void fmemopen_ex_reset(struct fmemctl *);
+
+
+FILE *dup_fp(FILE *fp, char const *mode) {
+    int fd, fd2 = -1;
+    FILE *fp2 = NULL;
+
+    if (!fp)
+        egoto2_set(E0, EINVAL, "fp is NULL");
+    fd = fileno(fp);
+    if (fd == -1)
+        egoto2(E0, errno, "fileno()");
+
+    fd2 = dup(fileno(fp));
+    if (fd2 == -1)
+        egoto2(E0, errno, "dup()");
+    fp2 = fdopen(fd2, mode);
+    if (!fp2)
+        egoto2(E0, errno, "fdopen()");
+    return fp2;
+
+E0: if (fd2 != -1) {
+        int saved_errno = errno;
+        close(fd2);
+        errno = saved_errno;
+    }
+    return NULL;
+}
+

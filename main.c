@@ -166,27 +166,130 @@ int main(int argc, char *argv[]) {
     }
 
 
+    HDLC_IO hdlc_io[1];
+
+    HDLC_IO_init(hdlc_io, fp);
+    HDLC_build_frame(hdlc);
+
+    HDLC_IO_send(hdlc_io, hdlc, timeout_ms);
+    while (1) {
+        rc = HDLC_IO_wait(hdlc_io);
+        if (rc < 0) {
+            if (errno == EAGAIN)
+                continue;
+            if (errno == ETIMEDWAIT)
+                ...
+            if (errno == EPIPE)
+                ...
+            ...
+        }
+        if (!rc)
+            break;
+        while (1) {
+            HDLC *p = HDLC_IO_get_hdlc(hdlc_io);
+            if (!p)
+                break;
+            DHLC_dump_frame(p);
+        }
+    }
+
+    HDLC_IO_recv(hdlc_io, timeout_ms);
+    while (1) {
+        rc = HDLC_IO_wait(hdlc_io);
+        if (rc < 0) {
+            if (errno == EAGAIN)
+                continue;
+            if (errno == ETIMEDWAIT)
+                ...
+            if (errno == EPIPE)
+                ...
+            ...
+        }
+        if (!rc)
+            break;
+        while (1) {
+            HDLC *p = HDLC_IO_get_hdlc(hdlc_io);
+            if (!p)
+                break;
+            DHLC_dump_frame(p);
+        }
+        
+    }
+    
+
+    0. timeout = 0 (нет ожидания)
+    1. вычитываем принятые пакеты.
+    2. пытаемся отправить.
+        если ушло все - завершаемся.
+        если нет 
+
+
+    struct pollfd pfd[1] = {{.fd = fileno(fp), .events = POLLIN, .revents = 0}};
+
+    buf = hdlc->frame.buf;
+    len = hdlc->frame.len;
+    while (1) {
+        if (len) {
+            size_t n = fwrite(buf, 1, len, fp);
+            buf += n;
+            len -= n;
+        }
+        if (!len)
+            if (!fflush(fp))
+                break;
+        assert(ferror(fp));
+        if (errno == EPIPE)
+            break;
+        if (errno != EAGAIN)
+            egoto2(E0, errno, "fflush()")
+        clearerr(fp);
+
+        pfd[0].events |= POLLOUT;
+        while (1) {
+            rc = poll(pfd, 1, timeout_ms);
+            if (rc < 0)
+                if (errno == EINTR)
+                    
+                egoto2(E0, errno, "poll()");
+            
+        }
+        
+    }
+
+
+
     HDLC_fini(hdlc);
     HDLC_SESS_fini(hdlc_sess);
     */
 
+    static IO io[1];
     static HDLC_CTX hdlc_ctx[1];
     static HDLC *hdlc;
 
+    IO_init(io, dup(STDIN_FILENO));
+
     HDLC_CTX_init(hdlc_ctx);
     while (1) {
-        int rc = HDLC_CTX_update(hdlc_ctx, stdin);
+        int rc = HDLC_CTX_update(hdlc_ctx, io);
         if (rc < 0)
             elog("HDLC_CTX_update() failed.");
         if (!rc)
             break;
-        hdlc = HDLC_attach(hdlc_ctx->hdlc);
-        assert(hdlc);
+        if (rc == 1) {
+            hdlc = HDLC_attach(hdlc_ctx->hdlc);
+            assert(hdlc);
 
-        HDLC_CTX_reset(hdlc_ctx);  /* HDLC_Complete -> HDLC_Initial */
+            HDLC_CTX_reset(hdlc_ctx);  /* HDLC_Complete -> HDLC_Initial */
 
-        /* HDLC_dump(hdlc); */
-        HDLC_detach(hdlc);
+            /* HDLC_dump(hdlc); */
+            HDLC_detach(hdlc);
+        }
+        if (rc == 2) {
+            hdlc = HDLC_attach(hdlc_ctx->hdlc);
+            /* ... */
+            log("[!!!] Получен фрагмент.");
+            HDLC_detach(hdlc);
+        }
 
 #if 0
         HDLC_SC_INDEX hdlc_sc_index = {
@@ -218,6 +321,7 @@ E0:
 #endif
 
     HDLC_CTX_fini(hdlc_ctx);
+    IO_fini(io);
     return -1;
 }
 
