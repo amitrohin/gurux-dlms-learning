@@ -165,7 +165,7 @@ int         HDLC_shared(HDLC *hdlc) {
 HDLC *      HDLC_create();
 void        HDLC_reset(HDLC *hdlc);
 
-enum hdlc_ctx_state {
+enum hdlc_framer_state {
     HDLC_Initial,           /* состояние перед чтением данных */
     HDLC_FrameOpenFlag,     /* прочитан маркер начала кадра 0x7e */
     HDLC_FrameFormat_1,     /* разобран первый байт */
@@ -187,42 +187,55 @@ enum hdlc_ctx_state {
     HDLC_FCS,               /* прочитан и проверен FCS (2 байта) */
     HDLC_Complete,          /* пакет полностью прочитан (включая закрывающий 0x7e) */
 };
-char const *hdlc_ctx_strstate(enum hdlc_ctx_state state);
+char const *hdlc_framer_strstate(enum hdlc_framer_state state);
 
-typedef struct hdlc_ctx {
+typedef struct hdlc_framer {
     int nref;
-    enum hdlc_ctx_state state;
+    enum hdlc_framer_state state;
     HDLC *hdlc;
-} HDLC_CTX;
+} HDLC_FRAMER;
 
-void        HDLC_CTX_init(HDLC_CTX *ctx);
-void        HDLC_CTX_fini(HDLC_CTX *ctx);
+void        HDLC_FRAMER_init(HDLC_FRAMER *framer);
+void        HDLC_FRAMER_fini(HDLC_FRAMER *framer);
 
 inline
-HDLC_CTX *  HDLC_CTX_attach(HDLC_CTX *ctx) {
-    assert(ctx->nref > 0);
-    ctx->nref++;
-    return ctx;
+HDLC_FRAMER *HDLC_FRAMER_attach(HDLC_FRAMER *framer) {
+    assert(framer->nref > 0);
+    framer->nref++;
+    return framer;
 }
 
 inline
-void        HDLC_CTX_detach(HDLC_CTX *ctx) {
-    assert(ctx->nref > 0);
-    if (ctx->nref == 1) {
-        HDLC_CTX_fini(ctx);
-        free(ctx);
+void HDLC_FRAMER_detach(HDLC_FRAMER *framer) {
+    assert(framer->nref > 0);
+    if (framer->nref == 1) {
+        HDLC_FRAMER_fini(framer);
+        free(framer);
     } else 
-        ctx->nref--;
+        framer->nref--;
 }
 
 inline
-int         HDLC_CTX_shared(HDLC_CTX *ctx) {
+int HDLC_FRAMER_shared(HDLC_FRAMER *ctx) {
     assert(ctx->nref > 0);
     return (ctx->nref != 1);
 }
 
-HDLC_CTX *  HDLC_CTX_create();
-int         HDLC_CTX_update(HDLC_CTX *ctx, IO *io);
-void        HDLC_CTX_reset(HDLC_CTX *ctx);
+HDLC_FRAMER *HDLC_FRAMER_create();
+int HDLC_FRAMER_update(HDLC_FRAMER *framer, IO *io);
+void HDLC_FRAMER_reset(HDLC_FRAMER *framer);
+
+#if 0
+typedef struct hdlc_sess {
+    int8_t ns, nr;
+} HDLC_SESS;
+
+
+HDLC_FRMR framer[1];
+HDLC_SESS sess[1];
+
+HDLC_FRMR_init()
+HDLC_SESS_init(sess, framer);
+#endif
 
 #endif

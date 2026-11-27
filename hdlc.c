@@ -119,7 +119,7 @@ void HDLC_reset(HDLC *hdlc) {
 }
 
 
-static char const *hdlc_ctx_state_strmap[] = {
+static char const *hdlc_framer_state_strmap[] = {
     MAPENTRY(HDLC_Initial),
     MAPENTRY(HDLC_FrameOpenFlag),
     MAPENTRY(HDLC_FrameFormat_1),
@@ -141,83 +141,83 @@ static char const *hdlc_ctx_state_strmap[] = {
     MAPENTRY(HDLC_FCS),
     MAPENTRY(HDLC_Complete),
 };
-char const *HDLC_CTX_strstate(enum hdlc_ctx_state state) {
+char const *HDLC_FRAMER_strstate(enum hdlc_framer_state state) {
     assert(state >= 0);
-    assert(state < sizeof hdlc_ctx_state_strmap /
-                        sizeof hdlc_ctx_state_strmap[0]);
-    return hdlc_ctx_state_strmap[state];
+    assert(state < sizeof hdlc_framer_state_strmap /
+                        sizeof hdlc_framer_state_strmap[0]);
+    return hdlc_framer_state_strmap[state];
 }
 
-void HDLC_CTX_init(HDLC_CTX *ctx) {
-    ctx->nref = 1;
-    ctx->state = HDLC_Initial;
-    ctx->hdlc = NULL;
+void HDLC_FRAMER_init(HDLC_FRAMER *framer) {
+    framer->nref = 1;
+    framer->state = HDLC_Initial;
+    framer->hdlc = NULL;
 }
 
-void HDLC_CTX_fini(HDLC_CTX *ctx) {
-    assert(ctx->nref == 1);
-    if (ctx->hdlc)
-        HDLC_detach(ctx->hdlc);
+void HDLC_FRAMER_fini(HDLC_FRAMER *framer) {
+    assert(framer->nref == 1);
+    if (framer->hdlc)
+        HDLC_detach(framer->hdlc);
 }
 
-extern inline HDLC_CTX *HDLC_CTX_attach(HDLC_CTX *ctx);
-extern inline void HDLC_CTX_detach(HDLC_CTX *ctx);
-extern inline int HDLC_CTX_shared(HDLC_CTX *ctx);
+extern inline HDLC_FRAMER *HDLC_FRAMER_attach(HDLC_FRAMER *framer);
+extern inline void HDLC_FRAMER_detach(HDLC_FRAMER *framer);
+extern inline int HDLC_FRAMER_shared(HDLC_FRAMER *framer);
 
-HDLC_CTX *HDLC_CTX_create() {
-    HDLC_CTX *ctx;
+HDLC_FRAMER *HDLC_FRAMER_create() {
+    HDLC_FRAMER *framer;
 
-    ctx = malloc(sizeof(HDLC_CTX));
-    if (!ctx) {
-        elog2(errno, "malloc(%zu)", sizeof(HDLC_CTX));
-        HDLC_CTX_init(ctx);
+    framer = malloc(sizeof(HDLC_FRAMER));
+    if (!framer) {
+        elog2(errno, "malloc(%zu)", sizeof(HDLC_FRAMER));
+        HDLC_FRAMER_init(framer);
     }
-    return ctx;
+    return framer;
 }
 
-void HDLC_CTX_reset(HDLC_CTX *ctx) {
-    assert(ctx->nref > 0);
-    if (ctx->nref != 1)
-        panic("Очистить HDLC_CTX можно только если на него никто кроме нас не ссылается.");
-    ctx->state = HDLC_Initial;
-    if (ctx->hdlc) {
-        if (HDLC_shared(ctx->hdlc)) {
-            HDLC_detach(ctx->hdlc);
-            ctx->hdlc = NULL;
+void HDLC_FRAMER_reset(HDLC_FRAMER *framer) {
+    assert(framer->nref > 0);
+    if (framer->nref != 1)
+        panic("Очистить HDLC_FRAMER можно только если на него никто кроме нас не ссылается.");
+    framer->state = HDLC_Initial;
+    if (framer->hdlc) {
+        if (HDLC_shared(framer->hdlc)) {
+            HDLC_detach(framer->hdlc);
+            framer->hdlc = NULL;
         } else
-            HDLC_reset(ctx->hdlc);
+            HDLC_reset(framer->hdlc);
     }
 }
 
-int HDLC_CTX_update(HDLC_CTX *ctx, IO *io) {
+int HDLC_FRAMER_update(HDLC_FRAMER *framer, IO *io) {
     HDLC *hdlc;
 
-    hdlc = ctx->hdlc;
+    hdlc = framer->hdlc;
 
-    if (ctx->state == HDLC_Complete) {
+    if (framer->state == HDLC_Complete) {
         if (hdlc) {
             if (HDLC_shared(hdlc)) {
-                ctx->hdlc = NULL;
+                framer->hdlc = NULL;
                 HDLC_detach(hdlc);
                 hdlc = NULL;
             } else
                 HDLC_reset(hdlc);
         }
-        ctx->state = HDLC_Initial;
+        framer->state = HDLC_Initial;
     }
 
-    if (ctx->state == HDLC_Initial) {
+    if (framer->state == HDLC_Initial) {
         if (!hdlc) {
             hdlc = HDLC_create();
             if (!hdlc)
                 egoto(E0, "HDLC_create() failed.");
-            ctx->hdlc = hdlc;
+            framer->hdlc = hdlc;
         }
     }
 
     while (1) {
-        /* ctx->state - это состояние чтения пакета, на который указывает hdlc */
-        enum hdlc_ctx_state state = ctx->state;
+        /* framer->state - это состояние чтения пакета, на который указывает hdlc */
+        enum hdlc_framer_state state = framer->state;
         int c = IO_getc(io);
         log("0x%02x", c);
         if (c < 0) {
@@ -246,7 +246,7 @@ int HDLC_CTX_update(HDLC_CTX *ctx, IO *io) {
             if (c != 0x7e)
                 egoto2_set(E0, EINVAL, "Ожидается начало hdlc-кадра - 0x7e, "
                     "но прочитано - 0x%02x.", c);
-            ctx->state = HDLC_FrameOpenFlag;
+            framer->state = HDLC_FrameOpenFlag;
 
         } else if (state == HDLC_FrameOpenFlag) {
             if ((c & 0xf0) != 0xa0)
@@ -255,13 +255,13 @@ int HDLC_CTX_update(HDLC_CTX *ctx, IO *io) {
 
             hdlc->fragment_bit = ((c >> 3) & 1);
             hdlc->length = ((c & 0x07) << 8);
-            ctx->state = HDLC_FrameFormat_1;
+            framer->state = HDLC_FrameFormat_1;
             log("  [hdlc] Frame Type 3");
             log("  [hdlc] S (fragment_bit): %d", hdlc->fragment_bit);
 
         } else if (state == HDLC_FrameFormat_1) {
             hdlc->length |= c;
-            ctx->state = HDLC_FrameFormat;
+            framer->state = HDLC_FrameFormat;
             log("  [hdlc] frame length: %d", hdlc->length);
 
         } else if (state == HDLC_FrameFormat) {
@@ -269,24 +269,24 @@ int HDLC_CTX_update(HDLC_CTX *ctx, IO *io) {
             hdlc->DA_lower = -1;
             if (c & 1) {
                 /* однобайтовый формат DA */
-                ctx->state = HDLC_DA;
+                framer->state = HDLC_DA;
                 log("  [hdlc] Upper DA: %d", hdlc->DA_upper);
                 log("  [hdlc] Lower DA: <не используется>");
             } else {
                 /* многобайтовый DA */
-                ctx->state = HDLC_DA_1;
+                framer->state = HDLC_DA_1;
             }
 
         } else if (state == HDLC_DA_1) {
             if (c & 1) {
                 /* двубайтовый формат upper+lower */
                 hdlc->DA_lower = (c >> 1);
-                ctx->state = HDLC_DA;
+                framer->state = HDLC_DA;
                 log("  [hdlc] Upper DA: %d", hdlc->DA_upper);
                 log("  [hdlc] Lower DA: %d", hdlc->DA_lower);
             } else {
                 hdlc->DA_upper = ((hdlc->DA_upper << 7) | (c >> 1));
-                ctx->state = HDLC_DA_2;
+                framer->state = HDLC_DA_2;
                 log("  [hdlc] Upper DA: %d", hdlc->DA_upper);
             }
 
@@ -296,7 +296,7 @@ int HDLC_CTX_update(HDLC_CTX *ctx, IO *io) {
                     "на третьем байте (т.е. младший бит в третьем байте не "
                     "может быть 1).");
             hdlc->DA_lower = (c >> 1);
-            ctx->state = HDLC_DA_3;
+            framer->state = HDLC_DA_3;
 
         } else if (state == HDLC_DA_3) {
             if ((c & 1) == 0)
@@ -304,7 +304,7 @@ int HDLC_CTX_update(HDLC_CTX *ctx, IO *io) {
                     "четырех байтов (т.е. младший бит в четвертом байте не "
                     "должен быть 0).");
             hdlc->DA_lower = ((hdlc->DA_lower << 7) | (c >> 1));
-            ctx->state = HDLC_DA;
+            framer->state = HDLC_DA;
             log("  [hdlc] Lower DA: %d", hdlc->DA_lower);
 
         } else if (state == HDLC_DA) {
@@ -312,24 +312,24 @@ int HDLC_CTX_update(HDLC_CTX *ctx, IO *io) {
             hdlc->SA_lower = -1;
             if (c & 1) {
                 /* однобайтовый формат SA */
-                ctx->state = HDLC_SA;
+                framer->state = HDLC_SA;
                 log("  [hdlc] Upper SA: %d", hdlc->SA_upper);
                 log("  [hdlc] Lower SA: <не используется>");
             } else {
                 /* многобайтовый SA */
-                ctx->state = HDLC_SA_1;
+                framer->state = HDLC_SA_1;
             }
 
         } else if (state == HDLC_SA_1) {
             if (c & 1) {
                 /* двубайтовый формат upper+lower */
                 hdlc->SA_lower = (c >> 1);
-                ctx->state = HDLC_SA;
+                framer->state = HDLC_SA;
                 log("  [hdlc] Upper SA: %d", hdlc->SA_upper);
                 log("  [hdlc] Lower SA: %d", hdlc->SA_lower);
             } else {
                 hdlc->SA_upper = ((hdlc->SA_upper << 7) | (c >> 1));
-                ctx->state = HDLC_SA_2;
+                framer->state = HDLC_SA_2;
                 log("  [hdlc] Upper SA: %d", hdlc->SA_upper);
             }
 
@@ -339,7 +339,7 @@ int HDLC_CTX_update(HDLC_CTX *ctx, IO *io) {
                     "на третьем байте (т.е. младший бит в третьем байте не "
                     "может быть 1).");
             hdlc->SA_lower = (c >> 1);
-            ctx->state = HDLC_SA_3;
+            framer->state = HDLC_SA_3;
 
         } else if (state == HDLC_SA_3) {
             if ((c & 1) == 0)
@@ -347,7 +347,7 @@ int HDLC_CTX_update(HDLC_CTX *ctx, IO *io) {
                     "четырех байтов (т.е. младший бит в четвертом байте не "
                     "должен быть 0).");
             hdlc->SA_lower = ((hdlc->SA_lower << 7) | (c >> 1));
-            ctx->state = HDLC_SA;
+            framer->state = HDLC_SA;
             log("  [hdlc] Lower SA: %d", hdlc->SA_lower);
 
         } else if (state == HDLC_SA) {
@@ -389,10 +389,10 @@ int HDLC_CTX_update(HDLC_CTX *ctx, IO *io) {
                         , hdlc->control.i.pf
                     );
             }
-            ctx->state = HDLC_Control;
+            framer->state = HDLC_Control;
 
         } else if (state == HDLC_Control) {
-            ctx->state = HDLC_HCS_1;
+            framer->state = HDLC_HCS_1;
 
         } else if (state == HDLC_HCS_1) {
             hdlc->payload_offset = mbuf_len(&hdlc->frame);
@@ -420,19 +420,19 @@ int HDLC_CTX_update(HDLC_CTX *ctx, IO *io) {
                     "быть меньше 2 (какая-то ошибка кодирования) и не должна "
                     "быть равной 2 (пустое информационное поле, где есть обе "
                     "конрольные суммы подряд - hcs и fcs).");
-            ctx->state = hdlc->payload_len ? HDLC_HCS : HDLC_FCS;
+            framer->state = hdlc->payload_len ? HDLC_HCS : HDLC_FCS;
 
         } else if (state == HDLC_HCS) {
-            ctx->state = hdlc->payload_len == 1 ? HDLC_Payload : HDLC_Payload_;
+            framer->state = hdlc->payload_len == 1 ? HDLC_Payload : HDLC_Payload_;
 
         } else if (state == HDLC_Payload_) {
             assert(hdlc->payload_len);
             assert(mbuf_len(&hdlc->frame) <= 1 + hdlc->length - 2);
             if (mbuf_len(&hdlc->frame) == 1 + hdlc->length - 2)
-                ctx->state = HDLC_Payload;
+                framer->state = HDLC_Payload;
 
         } else if (state == HDLC_Payload) {
-            ctx->state = HDLC_FCS_1;
+            framer->state = HDLC_FCS_1;
 
         } else if (state == HDLC_FCS_1) {
             uint16_t cksum_orig =
@@ -443,7 +443,7 @@ int HDLC_CTX_update(HDLC_CTX *ctx, IO *io) {
                 egoto2_set(E0, EBADMSG, "Ошибка контрольной суммы кадра FCS: "
                     "ожидалось 0x%04x, получено 0x%04x.", cksum_calc, cksum_orig);
             log("  [hdlc] fcs: cksum is ok.");
-            ctx->state = HDLC_FCS;
+            framer->state = HDLC_FCS;
 
         } else if (state == HDLC_FCS) {
            if (c != 0x7e)
@@ -451,13 +451,13 @@ int HDLC_CTX_update(HDLC_CTX *ctx, IO *io) {
                     "но прочитано 0x%02x.", c);
             log("  [hdlc] Frame complete (len=%d, payload=%u)",
                 hdlc->length, hdlc->payload_len);
-            ctx->state = HDLC_Complete;
+            framer->state = HDLC_Complete;
             break;
 
         } else
-            panic("Unhandled state: %s", HDLC_CTX_strstate(state));
+            panic("Unhandled state: %s", HDLC_FRAMER_strstate(state));
             
-        log("  >>> %s -> %s", HDLC_CTX_strstate(state), HDLC_CTX_strstate(ctx->state));
+        log("  >>> %s -> %s", HDLC_FRAMER_strstate(state), HDLC_FRAMER_strstate(framer->state));
     }
 
     /* [9.3]
@@ -480,14 +480,12 @@ int HDLC_CTX_update(HDLC_CTX *ctx, IO *io) {
 
     int rc;
 
-    if (ctx->state == HDLC_Initial)
+    if (framer->state == HDLC_Initial)
         rc = 0;
-    else if (ctx->state == HDLC_Complete)
+    else if (framer->state == HDLC_Complete)
         rc = 1;
-#if 0
     else
         panic("Unexpected state after parser loop.");
-#endif
     return rc;
 
 E0: return -1;

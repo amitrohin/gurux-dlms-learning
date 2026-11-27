@@ -263,29 +263,29 @@ int main(int argc, char *argv[]) {
     */
 
     static IO io[1];
-    static HDLC_CTX hdlc_ctx[1];
+    static HDLC_FRAMER framer[1];
     static HDLC *hdlc;
 
     IO_init(io, dup(STDIN_FILENO));
 
-    HDLC_CTX_init(hdlc_ctx);
+    HDLC_FRAMER_init(framer);
     while (1) {
-        int rc = HDLC_CTX_update(hdlc_ctx, io);
+        int rc = HDLC_FRAMER_update(framer, io);
         if (rc < 0)
-            elog("HDLC_CTX_update() failed.");
+            elog("HDLC_FRAMER_update() failed.");
         if (!rc)
             break;
         if (rc == 1) {
-            hdlc = HDLC_attach(hdlc_ctx->hdlc);
+            hdlc = HDLC_attach(framer->hdlc);
             assert(hdlc);
 
-            HDLC_CTX_reset(hdlc_ctx);  /* HDLC_Complete -> HDLC_Initial */
+            HDLC_FRAMER_reset(framer);  /* HDLC_Complete -> HDLC_Initial */
 
             /* HDLC_dump(hdlc); */
             HDLC_detach(hdlc);
         }
         if (rc == 2) {
-            hdlc = HDLC_attach(hdlc_ctx->hdlc);
+            hdlc = HDLC_attach(framer->hdlc);
             /* ... */
             log("[!!!] Получен фрагмент.");
             HDLC_detach(hdlc);
@@ -308,7 +308,7 @@ int main(int argc, char *argv[]) {
         HDLC_SESS_get_message()
 #endif
     }
-    HDLC_CTX_fini(hdlc_ctx);
+    HDLC_FRAMER_fini(framer);
     return 0;
 
 E0: 
@@ -320,7 +320,7 @@ E0:
         fclose(line.fp);
 #endif
 
-    HDLC_CTX_fini(hdlc_ctx);
+    HDLC_FRAMER_fini(framer);
     IO_fini(io);
     return -1;
 }
