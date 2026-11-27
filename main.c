@@ -280,7 +280,7 @@ int main(int argc, char *argv[]) {
             HDLC_AUTOPTR(hdlc);
             HDLC_SESS_AUTOPTR(sess);
 
-            hdlc = HDLC_attach(framer->hdlc);
+            hdlc = HDLC_FRAMER_get_hdlc(framer);
             assert(hdlc);
 
             /* HDLC_dump_frame(hdlc); */
@@ -288,14 +288,49 @@ int main(int argc, char *argv[]) {
             HDLC_FRAMER_reset(framer);  /* HDLC_Complete -> HDLC_Initial */
 
             sess = HDLC_MUX_get_sess(hdlc_mux, hdlc->DA, hdlc->SA);
-#if 0
             if (!sess) {
                 sess = HDLC_SESS_create();
                 if (!sess)
                     egoto2(E1, errno, "HDLC_SESS_create() failed.");
-                DHLC_MUX_insert(hdlc_mux, sess);
+
+                /* 1. I-frame: LLC-заголовок (E6 E6 00 / E6 E7 00) есть всегда в
+                 *    первом (или единственном) кадре цепочки. Во 2-м, 3-м и
+                 *    последующих сегментах той же цепочки LLC-заголовка уже нет.
+                 * 2. S-frame: LLC-заголовка нет никогда (у этих кадров вообще
+                 *    отсутствует информационное поле).
+                 * 3. U-frame: LLC-заголовок есть только в кадрах типа UI
+                 *    (Unnumbered Information, байт Control = 0x03 или 0x13 с
+                 *    учетом P/F-бита). Во всех остальных U-frame (SNRM, UA, DISC,
+                 *    DM, FRMR) LLC-заголовка нет.
+                 */
+                    int expect_llc = 0;
+                    if (ctx->hdlc == hdlc) {
+                        switch (hdlc->control.type) {
+                            case HDLC_S:
+                                break;
+                            case HDLC_U:
+                                if (hdlc->control.u.cmd != HDLC_U_UI)
+                                    break;
+                                __attribute__((fallthrough));
+                            case HDLC_I:
+                                expect_llc = 1;
+                        }
+                    }
+
+                    
+                if (!hdlc->fragment_bit)
+                    ;
+
+                    /* В общем случае мы не можем в пакете с битом
+                     * фрагментации точно определить кто в нем сервер, а
+                     * кто клиент. Тем не менее есть не
+                     */
+
+                /* XXX */
+                DHLC_MUX_set(hdlc_mux, sess);
             }
 
+#if 0
             int rc = HDLC_SESS_update(sess, hdlc);
             if (rc < 0)
                 egoto2(E0, errno, "HDLC_SESS_update() failed.");
