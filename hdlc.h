@@ -81,6 +81,16 @@ union hdlc_control {
 };
 
 
+typedef struct hdlc_addr {
+    int16_t upper;  /* 7 или 14 бит */
+    int16_t lower;  /* 7 или 14 бит */
+} hdlc_addr_t;
+
+static inline int hdlc_addr_eq(hdlc_addr_t a, hdlc_addr_t b) {
+    return (a.upper == b.upper) && (a.lower == b.lower);
+}
+
+
 enum hdlc_frag_role {
     HDLC_FRAG_NONE, /* обычный hdlc, не входит в цепочку фрагментов */
     HDLC_FRAG_HEAD, /* цепочка фрагментов, первый узел */
@@ -90,10 +100,7 @@ typedef struct hdlc {
     int nref;
     struct mbuf frame;
     int16_t length;         /* 11 бит */
-    int16_t DA_upper;       /* 7 или 14 бит */
-    int16_t DA_lower;       /* 7 или 14 бит */
-    int16_t SA_upper;       /* 7 или 14 бит */
-    int16_t SA_lower;       /* 7 или 14 бит */
+    hdlc_addr_t DA, SA;
     uint8_t fragment_bit;   /* 1 bit */
     union hdlc_control control;
     int16_t payload_offset;
@@ -108,6 +115,24 @@ typedef struct hdlc {
         STAILQ_ENTRY(hdlc) frag_ent;
     };
 } HDLC;
+
+#define HDLC_INITIALIZER(hdlc)  { \
+        .nref = 1, \
+        .mbuf_frame = MBUF_INITIALIZER(hdlc.mbuf_frame), \
+        .length = 0, \
+        .DA = { .upper = -1, .lower = -1 }, \
+        .SA = { .upper = -1, .lower = -1 }, \
+        .fragment_bit = 0, \
+        .control = { .type = -1 }, \
+        .payload_offset = -1, \
+        .payload_len = -1, \
+        .llc_dsap = -1, \
+        .llc_ssap = -1, \
+        .llc_control = -1, \
+        .ent = {0}, \
+        .frag_role = HDLC_FRAG_NONE, \
+        .frag_head = STAILQ_HEAD_INITIALIZER(hdlc.frag_head) \
+    }
 
 void        HDLC_init(HDLC *hdlc);
 
@@ -165,6 +190,21 @@ int         HDLC_shared(HDLC *hdlc) {
 HDLC *      HDLC_create();
 void        HDLC_reset(HDLC *hdlc);
 
+inline void HDLC_AUTOPTR_cleanup(HDLC **hdlc) {
+    if (*hdlc)
+        HDLC_detach(*hdlc);
+}
+#define HDLC_AUTOPTR(ptr) \
+    __attribute__((cleanup(HDLC_AUTOPTR_cleanup))) HDLC *ptr = NULL
+
+inline void HDLC_AUTOADDR_cleanup(HDLC (*hdlc)[1]) {
+    HDLC_fini(*hdlc);
+}
+#define HDLC_AUTOADDR(addr) \
+    __attribute__((cleanup(HDLC_AUTOADDR_cleanup))) \
+    HDLC addr[1] = {HDLC_INITIALIZER(addr[0])}
+
+
 enum hdlc_framer_state {
     HDLC_Initial,           /* состояние перед чтением данных */
     HDLC_FrameOpenFlag,     /* прочитан маркер начала кадра 0x7e */
@@ -215,6 +255,13 @@ void HDLC_FRAMER_detach(HDLC_FRAMER *framer) {
         framer->nref--;
 }
 
+inline HDLC *HDLC_FRAMER_get_hdlc(HDLC_FRAMER *framer) {
+    HDLC *hdlc = framer->hdlc;
+    if (hdlc)
+        HDLC_attach(hdlc);
+    return hdlc;
+}
+
 inline
 int HDLC_FRAMER_shared(HDLC_FRAMER *ctx) {
     assert(ctx->nref > 0);
@@ -225,17 +272,157 @@ HDLC_FRAMER *HDLC_FRAMER_create();
 int HDLC_FRAMER_update(HDLC_FRAMER *framer, IO *io);
 void HDLC_FRAMER_reset(HDLC_FRAMER *framer);
 
+
+/* V(S) — Send State Variable (переменная состояния передачи):
+ *     Счетчик (0..7), который хранит номер следующего I-кадра, который мы собираемся
+ *     отправить. При формировании исходящего кадра значение V(S) записывается в поле
+ *     N(S) заголовка, после чего V(S) увеличивается на 1 по модулю 8.
+ * 
+ * V(R) — Receive State Variable (переменная состояния приема):
+ *     Счетчик (0..7), который хранит номер N(S) следующего входящего I-кадра, который
+ *     мы ожидаем получить от собеседника.  Когда приходит корректный кадр с N(S) ==
+ *     V(R), мы увеличиваем V(R) на 1 по модулю 8 и подставляем это новое V(R) в поле
+ *     N(R) своих ответных кадров (подтверждая тем самым прием всех кадров вплоть до
+ *     V(R) - 1).
+ */ 
+typedef struct hdlc_sess {
+    LIST_ENTRY(hdlc_sess) mux_ent;
+    hdlc_addr_t client, server;
+    int nref;
+    int8_t vs, vr;
+    HDLC *hdlc;
+} HDLC_SESS;
+
+inline void HDLC_SESS_init(HDLC_SESS *sess) {
+    sess->client.upper = -1;
+    sess->client.lower = -1;
+    sess->server.upper = -1;
+    sess->server.lower = -1;
+    sess->nref = -1;
+    sess->vs = -1;
+    sess->vr = -1;
+    sess->hdlc = NULL;
+}
+
+inline void HDLC_SESS_fini(HDLC_SESS *sess) {
+    assert(sess);
+    assert(sess->nref == 1);
+    if (sess->hdlc)
+        HDLC_detach(sess->hdlc);
+}
+
+inline HDLC_SESS *HDLC_SESS_create() {
+    HDLC_SESS *sess;
+
+    sess = malloc(sizeof *sess);
+    if (sess)
+        HDLC_SESS_init(sess);
+    else
+        elog2(errno, "malloc()");
+    return sess;
+}
+
+inline HDLC_SESS *HDLC_SESS_attach(HDLC_SESS *sess) {
+    assert(sess);
+    assert(sess->nref > 0);
+    sess->nref++;
+    return sess;
+}
+
+inline void HDLC_SESS_detach(HDLC_SESS *sess) {
+    assert(sess);
+    assert(sess->nref > 0);
+    if (sess->nref == 1) {
+        HDLC_SESS_fini(sess);
+        free(sess);
+    } else
+        sess->nref--;
+}
+
+inline void HDLC_SESS_AUTOPTR_cleanup(HDLC_SESS **sess) {
+    if (*sess)
+        HDLC_SESS_detach(*sess);
+}
+#define HDLC_SESS_AUTOPTR(ptr) \
+    __attribute__((cleanup(HDLC_SESS_AUTOPTR_cleanup))) HDLC_SESS *ptr = NULL
+
+inline void HDLC_SESS_AUTOADDR_cleanup(HDLC_SESS (*sess)[1]) {
+    HDLC_SESS_fini(*sess);
+}
+#define HDLC_SESS_AUTOADDR(addr) \
+    __attribute__((cleanup(HDLC_SESS_AUTOADDR_cleanup))) \
+    HDLC_SESS addr[1] = {HDLC_INITIALIZER(addr[0])}
+
+
+
+#define HDLC_MUX_HASH_BITS  7
+#define HDLC_MUX_HASH_SIZE  (1 << HDLC_MUX_HASH_BITS)
+
+inline size_t hdlc_mux_hash_index(hdlc_addr_t a, hdlc_addr_t b) {
+    uint32_t ka = ((uint32_t)(uint16_t)a.upper << 16) | (uint16_t)a.lower;
+    uint32_t kb = ((uint32_t)(uint16_t)b.upper << 16) | (uint16_t)b.lower;
+    if (ka > kb) {
+        uint32_t tmp = ka;
+        ka = kb;
+        kb = tmp;
+    }
+    return (size_t)(((((uint64_t)ka << 32) | kb) * 11400714819323198485ULL) >> (64 - HDLC_MUX_HASH_BITS));
+}
+
+typedef struct hdlc_mux {
+    LIST_HEAD(, hdlc_sess) buckets[HDLC_MUX_HASH_SIZE];
+} HDLC_MUX;
+
+inline void HDLC_MUX_init(HDLC_MUX *mux) {
+    for (size_t i = 0; i < HDLC_MUX_HASH_SIZE; i++)
+        LIST_INIT(mux->buckets + i);
+}
+
+inline void HDLC_MUX_fini(HDLC_MUX *mux) {
+    for (size_t i = 0; i < HDLC_MUX_HASH_SIZE; i++) {
+        HDLC_SESS *p = LIST_FIRST(mux->buckets + i);
+        while (p) {
+            HDLC_SESS *q = LIST_NEXT(p, mux_ent);
+            HDLC_SESS_detach(p);
+            p = q;
+        }
+        LIST_INIT(mux->buckets + i);
+    }
+}
+
+inline HDLC_SESS *HDLC_MUX_get_sess(HDLC_MUX *mux, hdlc_addr_t a, hdlc_addr_t b) {
+    size_t index = hdlc_mux_hash_index(a, b);
+    HDLC_SESS *p = NULL;
+    LIST_FOREACH(p, mux->buckets + index, mux_ent) {
+        if ((hdlc_addr_eq(p->client, a) || hdlc_addr_eq(p->client, b)) &&
+            (hdlc_addr_eq(p->server, a) || hdlc_addr_eq(p->server, b)))
+            break;
+    }
+    return p ? HDLC_SESS_attach(p) : p;
+}
+
+inline void HDLC_MUX_set_sess(HDLC_MUX *mux, HDLC_SESS *sess) {
+    HDLC_SESS_attach(sess);
+    size_t index = hdlc_mux_hash_index(sess->client, sess->server);
+    LIST_INSERT_HEAD(mux->buckets + index, sess, mux_ent);
+}
+
 #if 0
 typedef struct hdlc_sess {
     int8_t ns, nr;
 } HDLC_SESS;
 
 
-HDLC_FRMR framer[1];
+HDLC_FRAMER framer[1];
 HDLC_SESS sess[1];
 
-HDLC_FRMR_init()
-HDLC_SESS_init(sess, framer);
+HDLC_FRAMER_init(framer)
+HDLC_SESS_init(sess);
+
+sess = HDLC_SESS_se(dau, dal, sau, sal);
+HDLC_SESS_();
+
+
 #endif
 
 #endif

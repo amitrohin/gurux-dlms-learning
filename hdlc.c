@@ -64,10 +64,10 @@ void HDLC_init(HDLC *hdlc) {
     hdlc->nref = 1;
     mbuf_init(&hdlc->frame);
     hdlc->length = 0;
-    hdlc->DA_upper = -1;
-    hdlc->DA_lower = -1;
-    hdlc->SA_upper = -1;
-    hdlc->SA_lower = -1;
+    hdlc->DA.upper = -1;
+    hdlc->DA.lower = -1;
+    hdlc->SA.upper = -1;
+    hdlc->SA.lower = -1;
     hdlc->fragment_bit = 0;
     hdlc->control.type = -1;
     hdlc->payload_offset = -1;
@@ -82,6 +82,39 @@ void HDLC_init(HDLC *hdlc) {
         elog("WARNING: Ошибка резервирования 128 байтов под hdlc фрейм.");
 }
 
+void HDLC_reset(HDLC *hdlc) {
+    assert(hdlc->nref > 0);
+    if (hdlc->nref != 1)
+        panic("Очистить буфер можно только если на него никто кроме нас не ссылается.");
+    assert(hdlc->frame.nref == 1);
+    mbuf_reset(&hdlc->frame);
+    hdlc->length = 0;
+    hdlc->DA.upper = -1;
+    hdlc->DA.lower = -1;
+    hdlc->SA.upper = -1;
+    hdlc->SA.lower = -1;
+    hdlc->fragment_bit = 0;
+    hdlc->control.type = -1;
+    hdlc->payload_offset = -1;
+    hdlc->payload_len = -1;
+    STAILQ_NEXT(hdlc, ent) = NULL;
+    switch (hdlc->frag_role) {
+        case HDLC_FRAG_NONE:
+            break;
+        case HDLC_FRAG_HEAD: {
+            HDLC *p = STAILQ_FIRST(&hdlc->frag_head);
+            while (p) {
+                HDLC *q = STAILQ_NEXT(p, frag_ent);
+                HDLC_detach(p);
+                p = q;
+            }
+            STAILQ_INIT(&hdlc->frag_head);
+            break;
+        }
+        case HDLC_FRAG_PART:
+            break;
+    }
+}
 
 extern inline void HDLC_fini(HDLC *hdlc);
 extern inline HDLC *HDLC_attach(HDLC *hdlc);
@@ -100,23 +133,8 @@ HDLC *HDLC_create() {
     return hdlc;
 }
 
-void HDLC_reset(HDLC *hdlc) {
-    assert(hdlc->nref > 0);
-    if (hdlc->nref != 1)
-        panic("Очистить буфер можно только если на него никто кроме нас не ссылается.");
-    assert(hdlc->frame.nref == 1);
-    mbuf_reset(&hdlc->frame);
-    hdlc->length = 0;
-    hdlc->DA_upper = -1;
-    hdlc->DA_lower = -1;
-    hdlc->SA_upper = -1;
-    hdlc->SA_lower = -1;
-    hdlc->fragment_bit = 0;
-    hdlc->control.type = -1;
-    hdlc->payload_offset = -1;
-    hdlc->payload_len = -1;
-    STAILQ_NEXT(hdlc, ent) = NULL;
-}
+extern inline void HDLC_AUTOPTR_cleanup(HDLC **hdlc);
+extern inline void HDLC_AUTOADDR_cleanup(HDLC (*hdlc)[1]);
 
 
 static char const *hdlc_framer_state_strmap[] = {
@@ -163,6 +181,7 @@ void HDLC_FRAMER_fini(HDLC_FRAMER *framer) {
 extern inline HDLC_FRAMER *HDLC_FRAMER_attach(HDLC_FRAMER *framer);
 extern inline void HDLC_FRAMER_detach(HDLC_FRAMER *framer);
 extern inline int HDLC_FRAMER_shared(HDLC_FRAMER *framer);
+extern inline HDLC *HDLC_FRAMER_get_hdlc(HDLC_FRAMER *framer);
 
 HDLC_FRAMER *HDLC_FRAMER_create() {
     HDLC_FRAMER *framer;
@@ -265,12 +284,12 @@ int HDLC_FRAMER_update(HDLC_FRAMER *framer, IO *io) {
             log("  [hdlc] frame length: %d", hdlc->length);
 
         } else if (state == HDLC_FrameFormat) {
-            hdlc->DA_upper = (c >> 1);
-            hdlc->DA_lower = -1;
+            hdlc->DA.upper = (c >> 1);
+            hdlc->DA.lower = -1;
             if (c & 1) {
                 /* однобайтовый формат DA */
                 framer->state = HDLC_DA;
-                log("  [hdlc] Upper DA: %d", hdlc->DA_upper);
+                log("  [hdlc] Upper DA: %d", hdlc->DA.upper);
                 log("  [hdlc] Lower DA: <не используется>");
             } else {
                 /* многобайтовый DA */
@@ -280,14 +299,14 @@ int HDLC_FRAMER_update(HDLC_FRAMER *framer, IO *io) {
         } else if (state == HDLC_DA_1) {
             if (c & 1) {
                 /* двубайтовый формат upper+lower */
-                hdlc->DA_lower = (c >> 1);
+                hdlc->DA.lower = (c >> 1);
                 framer->state = HDLC_DA;
-                log("  [hdlc] Upper DA: %d", hdlc->DA_upper);
-                log("  [hdlc] Lower DA: %d", hdlc->DA_lower);
+                log("  [hdlc] Upper DA: %d", hdlc->DA.upper);
+                log("  [hdlc] Lower DA: %d", hdlc->DA.lower);
             } else {
-                hdlc->DA_upper = ((hdlc->DA_upper << 7) | (c >> 1));
+                hdlc->DA.upper = ((hdlc->DA.upper << 7) | (c >> 1));
                 framer->state = HDLC_DA_2;
-                log("  [hdlc] Upper DA: %d", hdlc->DA_upper);
+                log("  [hdlc] Upper DA: %d", hdlc->DA.upper);
             }
 
         } else if (state == HDLC_DA_2) {
@@ -295,7 +314,7 @@ int HDLC_FRAMER_update(HDLC_FRAMER *framer, IO *io) {
                 egoto2_set(E0, EINVAL, "hdlc адрес не может заканчиваться "
                     "на третьем байте (т.е. младший бит в третьем байте не "
                     "может быть 1).");
-            hdlc->DA_lower = (c >> 1);
+            hdlc->DA.lower = (c >> 1);
             framer->state = HDLC_DA_3;
 
         } else if (state == HDLC_DA_3) {
@@ -303,17 +322,17 @@ int HDLC_FRAMER_update(HDLC_FRAMER *framer, IO *io) {
                 egoto2_set(E0, EINVAL, "hdlc адрес не может быть длиннее "
                     "четырех байтов (т.е. младший бит в четвертом байте не "
                     "должен быть 0).");
-            hdlc->DA_lower = ((hdlc->DA_lower << 7) | (c >> 1));
+            hdlc->DA.lower = ((hdlc->DA.lower << 7) | (c >> 1));
             framer->state = HDLC_DA;
-            log("  [hdlc] Lower DA: %d", hdlc->DA_lower);
+            log("  [hdlc] Lower DA: %d", hdlc->DA.lower);
 
         } else if (state == HDLC_DA) {
-            hdlc->SA_upper = (c >> 1);
-            hdlc->SA_lower = -1;
+            hdlc->SA.upper = (c >> 1);
+            hdlc->SA.lower = -1;
             if (c & 1) {
                 /* однобайтовый формат SA */
                 framer->state = HDLC_SA;
-                log("  [hdlc] Upper SA: %d", hdlc->SA_upper);
+                log("  [hdlc] Upper SA: %d", hdlc->SA.upper);
                 log("  [hdlc] Lower SA: <не используется>");
             } else {
                 /* многобайтовый SA */
@@ -323,14 +342,14 @@ int HDLC_FRAMER_update(HDLC_FRAMER *framer, IO *io) {
         } else if (state == HDLC_SA_1) {
             if (c & 1) {
                 /* двубайтовый формат upper+lower */
-                hdlc->SA_lower = (c >> 1);
+                hdlc->SA.lower = (c >> 1);
                 framer->state = HDLC_SA;
-                log("  [hdlc] Upper SA: %d", hdlc->SA_upper);
-                log("  [hdlc] Lower SA: %d", hdlc->SA_lower);
+                log("  [hdlc] Upper SA: %d", hdlc->SA.upper);
+                log("  [hdlc] Lower SA: %d", hdlc->SA.lower);
             } else {
-                hdlc->SA_upper = ((hdlc->SA_upper << 7) | (c >> 1));
+                hdlc->SA.upper = ((hdlc->SA.upper << 7) | (c >> 1));
                 framer->state = HDLC_SA_2;
-                log("  [hdlc] Upper SA: %d", hdlc->SA_upper);
+                log("  [hdlc] Upper SA: %d", hdlc->SA.upper);
             }
 
         } else if (state == HDLC_SA_2) {
@@ -338,7 +357,7 @@ int HDLC_FRAMER_update(HDLC_FRAMER *framer, IO *io) {
                 egoto2_set(E0, EINVAL, "hdlc адрес не может заканчиваться "
                     "на третьем байте (т.е. младший бит в третьем байте не "
                     "может быть 1).");
-            hdlc->SA_lower = (c >> 1);
+            hdlc->SA.lower = (c >> 1);
             framer->state = HDLC_SA_3;
 
         } else if (state == HDLC_SA_3) {
@@ -346,9 +365,9 @@ int HDLC_FRAMER_update(HDLC_FRAMER *framer, IO *io) {
                 egoto2_set(E0, EINVAL, "hdlc адрес не может быть длиннее "
                     "четырех байтов (т.е. младший бит в четвертом байте не "
                     "должен быть 0).");
-            hdlc->SA_lower = ((hdlc->SA_lower << 7) | (c >> 1));
+            hdlc->SA.lower = ((hdlc->SA.lower << 7) | (c >> 1));
             framer->state = HDLC_SA;
-            log("  [hdlc] Lower SA: %d", hdlc->SA_lower);
+            log("  [hdlc] Lower SA: %d", hdlc->SA.lower);
 
         } else if (state == HDLC_SA) {
             int pf = (c >> 4) & 1U;
@@ -490,3 +509,19 @@ int HDLC_FRAMER_update(HDLC_FRAMER *framer, IO *io) {
 
 E0: return -1;
 }
+
+
+extern inline void          HDLC_SESS_init(HDLC_SESS *sess);
+extern inline void          HDLC_SESS_fini(HDLC_SESS *sess);
+extern inline HDLC_SESS *   HDLC_SESS_create();
+extern inline HDLC_SESS *   HDLC_SESS_attach(HDLC_SESS *sess);
+extern inline void          HDLC_SESS_detach(HDLC_SESS *sess);
+
+extern inline void HDLC_SESS_AUTOPTR_cleanup(HDLC_SESS **sess);
+extern inline void HDLC_SESS_AUTOADDR_cleanup(HDLC_SESS (*sess)[1]);
+
+extern inline void          HDLC_MUX_init(HDLC_MUX *mux);
+extern inline void          HDLC_MUX_fini(HDLC_MUX *mux);
+extern inline size_t        hdlc_mux_hash_index(hdlc_addr_t a, hdlc_addr_t b);
+extern inline HDLC_SESS *   HDLC_MUX_get_sess(HDLC_MUX *mux, hdlc_addr_t a, hdlc_addr_t b);
+extern inline void          HDLC_MUX_set_sess(HDLC_MUX *mux, HDLC_SESS *sess);

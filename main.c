@@ -264,54 +264,58 @@ int main(int argc, char *argv[]) {
 
     static IO io[1];
     static HDLC_FRAMER framer[1];
-    static HDLC *hdlc;
+    static HDLC_MUX hdlc_mux[1];
 
     IO_init(io, dup(STDIN_FILENO));
+    HDLC_MUX_init(hdlc_mux);
 
     HDLC_FRAMER_init(framer);
     while (1) {
         int rc = HDLC_FRAMER_update(framer, io);
         if (rc < 0)
-            elog("HDLC_FRAMER_update() failed.");
+            egoto2(E0, errno, "HDLC_FRAMER_update() failed.");
         if (!rc)
             break;
         if (rc == 1) {
+            HDLC_AUTOPTR(hdlc);
+            HDLC_SESS_AUTOPTR(sess);
+
             hdlc = HDLC_attach(framer->hdlc);
             assert(hdlc);
 
+            /* HDLC_dump_frame(hdlc); */
+
             HDLC_FRAMER_reset(framer);  /* HDLC_Complete -> HDLC_Initial */
 
-            /* HDLC_dump(hdlc); */
-            HDLC_detach(hdlc);
-        }
-        if (rc == 2) {
-            hdlc = HDLC_attach(framer->hdlc);
-            /* ... */
-            log("[!!!] Получен фрагмент.");
-            HDLC_detach(hdlc);
-        }
-
+            sess = HDLC_MUX_get_sess(hdlc_mux, hdlc->DA, hdlc->SA);
 #if 0
-        HDLC_SC_INDEX hdlc_sc_index = {
-            hdlc->DA_upper, hdlc->DA_lower, hdlc->SA_upper, hdlc->SA_lower,
-        };
+            if (!sess) {
+                sess = HDLC_SESS_create();
+                if (!sess)
+                    egoto2(E1, errno, "HDLC_SESS_create() failed.");
+                DHLC_MUX_insert(hdlc_mux, sess);
+            }
 
-        sess = HDLC_SC_search(hdlc_sc, &hdlc_sc_index);
-        if (!sess)
-            sess = HDLC_SESS_create(hdlc_sc_index);
-
-        rc = HDLC_SESS_update(sess, hdlc);
-        if (rc < 0)
-            elog("HDLC_SESS_update() failed.");
-
-
-        HDLC_SESS_get_message()
+            int rc = HDLC_SESS_update(sess, hdlc);
+            if (rc < 0)
+                egoto2(E0, errno, "HDLC_SESS_update() failed.");
+            if (!rc)
+                ...
+            
+            // HDLC_SESS_detach(sess);
 #endif
+        }
     }
     HDLC_FRAMER_fini(framer);
+    HDLC_MUX_fini(hdlc_mux);
+    IO_fini(io);
     return 0;
 
 E0: 
+    HDLC_FRAMER_fini(framer);
+    HDLC_MUX_fini(hdlc_mux);
+    IO_fini(io);
+
 #ifndef XXX
     if (line.flags & LINE_TERMIOS_VALID)
         if (tcsetattr(fileno(line.fp), TCSAFLUSH, &line.tios) < 0)
@@ -319,9 +323,6 @@ E0:
     if (line.fp)
         fclose(line.fp);
 #endif
-
-    HDLC_FRAMER_fini(framer);
-    IO_fini(io);
     return -1;
 }
 
